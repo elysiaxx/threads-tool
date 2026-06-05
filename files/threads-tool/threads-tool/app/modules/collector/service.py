@@ -32,6 +32,25 @@ _CONTENT_TYPE_EXT = {
     "video/quicktime": ".mov",
 }
 
+# Ràng buộc Threads: ảnh JPEG/PNG ≤8MB; video MP4/MOV ≤1GB.
+_IMAGE_TYPES = {"image/jpeg", "image/png"}
+_VIDEO_TYPES = {"video/mp4", "video/quicktime"}
+_MAX_IMAGE_BYTES = 8 * 1024 * 1024
+_MAX_VIDEO_BYTES = 1024 * 1024 * 1024
+
+
+def _validate_media(content_type: str, size: int) -> None:
+    """Kiểm tra định dạng + dung lượng theo ràng buộc Threads; raise nếu vi phạm."""
+    ct = content_type.split(";")[0].strip().lower()
+    if ct in _IMAGE_TYPES:
+        if size > _MAX_IMAGE_BYTES:
+            raise ValueError(f"Ảnh vượt {_MAX_IMAGE_BYTES // (1024 * 1024)}MB")
+    elif ct in _VIDEO_TYPES:
+        if size > _MAX_VIDEO_BYTES:
+            raise ValueError("Video vượt 1GB")
+    else:
+        raise ValueError(f"Định dạng không hỗ trợ: {ct or 'không rõ'}")
+
 
 def _derive_filename(source_url: str, content_type: str) -> str:
     """Tên file duy nhất: <uuid ngắn>-<tên gốc>, có đuôi suy ra từ content-type."""
@@ -81,6 +100,7 @@ async def collect_source(user_id: str, source_id: str) -> dict:
             proxy = await proxy_service.pick_from_pool(client[settings.mongo_db], user_id)
         try:
             data, content_type = await _download(source_url, proxy)
+            _validate_media(content_type, len(data))  # lỗi -> failed (terminal)
             filename = _derive_filename(source_url, content_type)
             # boto3 là sync/blocking -> chạy trong thread để không chặn event loop.
             media_url = await asyncio.to_thread(

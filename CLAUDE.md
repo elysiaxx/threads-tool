@@ -40,7 +40,7 @@ docker compose down
 
 Services after startup:
 - API + Swagger: `http://localhost:8000` / `/docs`
-- MinIO console: `http://localhost:9001` (create bucket `media`, set public-read)
+- MinIO console: `http://localhost:9001` (bucket `media` is auto-created with a public-read policy at API startup via `storage.ensure_bucket`)
 - MongoDB: `localhost:27017`, Redis: `localhost:6379`
 
 Quick auth smoke-test:
