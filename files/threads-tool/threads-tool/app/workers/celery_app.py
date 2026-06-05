@@ -13,5 +13,14 @@ celery_app.conf.update(
     enable_utc=True,
 )
 
+# Beat: định kỳ fan-out poll insights cho mọi owned account (xuyên tenant).
+# Mỗi 30 phút — insights cập nhật chậm, tránh đốt rate-limit của Threads API.
+celery_app.conf.beat_schedule = {
+    "poll-owned-accounts-every-30m": {
+        "task": "analytics.dispatch_owned_accounts",
+        "schedule": 30 * 60.0,
+    },
+}
+
 # import để task được đăng ký khi worker khởi động
 import app.workers.tasks  # noqa: E402,F401

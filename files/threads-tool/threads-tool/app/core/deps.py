@@ -49,6 +49,11 @@ class RepoFactory:
         self._db = db
         self._user_id = user_id
 
+    @property
+    def user_id(self) -> str:
+        """user_id của request hiện tại (để truyền vào Celery task)."""
+        return self._user_id
+
     def __call__(self, collection_name: str) -> TenantRepository:
         return TenantRepository(self._db[collection_name], self._user_id)
 
