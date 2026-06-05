@@ -19,6 +19,7 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from app.config import settings
 from app.core.crypto import decrypt_token
 from app.db.repository import TenantRepository
+from app.services import proxy as proxy_service
 from app.services.threads_api import ThreadsApiClient
 
 
@@ -63,7 +64,8 @@ async def poll_account(user_id: str, account_id: str) -> dict:
 
         token = decrypt_token(acc["access_token_enc"])
         threads_user_id = acc.get("threads_user_id")
-        api = ThreadsApiClient(token)
+        proxy = await proxy_service.resolve_for_account(db, user_id, acc)
+        api = ThreadsApiClient(token, proxy=proxy)
         now = datetime.now(timezone.utc)
 
         # 1) Insights cấp tài khoản (post_id=None đại diện cho account).
@@ -112,11 +114,10 @@ async def poll_account(user_id: str, account_id: str) -> dict:
         client.close()
 
 
-async def _first_owned_token(db: AsyncIOMotorDatabase, user_id: str) -> Optional[str]:
+async def _first_owned_account(db: AsyncIOMotorDatabase, user_id: str) -> Optional[dict]:
     """keyword_search cần token của 1 owned account bất kỳ của user."""
     accounts = TenantRepository(db["accounts"], user_id)
-    acc = await accounts.find_one({"type": "owned", "access_token_enc": {"$ne": None}})
-    return decrypt_token(acc["access_token_enc"]) if acc else None
+    return await accounts.find_one({"type": "owned", "access_token_enc": {"$ne": None}})
 
 
 async def poll_tracked(user_id: str, keyword: str) -> dict:
@@ -124,11 +125,13 @@ async def poll_tracked(user_id: str, keyword: str) -> dict:
     client = AsyncIOMotorClient(settings.mongo_uri)
     try:
         db = client[settings.mongo_db]
-        token = await _first_owned_token(db, user_id)
-        if not token:
+        acc = await _first_owned_account(db, user_id)
+        if not acc:
             return {"status": "skipped", "error": "cần ít nhất 1 owned account có token"}
 
-        api = ThreadsApiClient(token)
+        token = decrypt_token(acc["access_token_enc"])
+        proxy = await proxy_service.resolve_for_account(db, user_id, acc)
+        api = ThreadsApiClient(token, proxy=proxy)
         now = datetime.now(timezone.utc)
         results = await api.keyword_search(keyword)
 

@@ -20,6 +20,8 @@ async def ensure_indexes() -> None:
 
     await db.sources.create_index([("user_id", 1), ("status", 1)])
 
+    await db.proxies.create_index([("user_id", 1), ("active", 1)])
+
     await db.jobs.create_index([("user_id", 1), ("status", 1), ("scheduled_at", 1)])
 
     await db.posts.create_index([("user_id", 1), ("published_at", -1)])

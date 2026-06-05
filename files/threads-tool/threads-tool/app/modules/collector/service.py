@@ -10,6 +10,7 @@ import asyncio
 import os
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 from urllib.parse import unquote, urlparse
 
 import httpx
@@ -17,6 +18,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.config import settings
 from app.db.repository import TenantRepository
+from app.services import proxy as proxy_service
 from app.services import storage
 
 # Giới hạn tải để tránh kéo file khổng lồ về worker (Threads: ảnh ≤8MB, video ≤1GB).
@@ -41,9 +43,11 @@ def _derive_filename(source_url: str, content_type: str) -> str:
     return f"{uuid.uuid4().hex[:8]}-{name}{ext}"
 
 
-async def _download(source_url: str) -> tuple[bytes, str]:
+async def _download(source_url: str, proxy: Optional[str] = None) -> tuple[bytes, str]:
     """Tải nội dung; trả về (bytes, content_type). Raise nếu vượt giới hạn."""
-    async with httpx.AsyncClient(follow_redirects=True, timeout=120) as client:
+    async with httpx.AsyncClient(
+        follow_redirects=True, timeout=120, proxy=proxy
+    ) as client:
         async with client.stream("GET", source_url) as resp:
             resp.raise_for_status()
             content_type = resp.headers.get("content-type", "application/octet-stream")
@@ -70,8 +74,12 @@ async def collect_source(user_id: str, source_id: str) -> dict:
             return {"status": "failed", "error": "source không tồn tại"}
 
         source_url = doc["source_url"]
+        # Media không gắn account -> dùng pool xoay vòng nếu được bật cho media.
+        proxy = None
+        if settings.proxy_apply_to_media:
+            proxy = await proxy_service.pick_from_pool(client[settings.mongo_db], user_id)
         try:
-            data, content_type = await _download(source_url)
+            data, content_type = await _download(source_url, proxy)
             filename = _derive_filename(source_url, content_type)
             # boto3 là sync/blocking -> chạy trong thread để không chặn event loop.
             media_url = await asyncio.to_thread(

@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # Frontend
     frontend_url: str = "http://localhost:5173"
 
+    # Proxy (định tuyến outbound qua proxy theo account / pool xoay vòng)
+    proxy_enabled: bool = False  # tắt -> mọi request đi trực tiếp như cũ
+    proxy_apply_to_media: bool = True  # có định tuyến tải media (Collector) không
+    proxy_test_url: str = "https://api.ipify.org?format=json"  # echo IP khi test
+
     # Threads OAuth (mọi giá trị đều cấu hình được để user tự thiết lập app)
     threads_client_id: str = ""
     threads_client_secret: str = ""

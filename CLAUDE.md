@@ -92,6 +92,7 @@ async def list_posts(repos: RepoFactory = Depends(get_repos)):
 | `app/db/indexes.py` | MongoDB indexes (always start with `user_id`) + `metrics_ts` time-series collection |
 | `app/services/oauth/threads.py` | Threads OAuth: authorize URL, code exchange, token refresh |
 | `app/services/threads_api.py` | Threads Graph API read client (threads list, insights, keyword search) |
+| `app/services/proxy.py` | Proxy resolution (per-account fixed → rotating pool fallback) + connection test |
 | `app/services/storage.py` | S3-compatible upload with prefix `media/{user_id}/...` |
 | `app/workers/tasks.py` | Celery tasks: `collect_media`, `poll_account_metrics`, `poll_tracked`, Beat dispatcher |
 | `app/config.py` | All settings via `pydantic-settings` / `.env` |
@@ -101,7 +102,8 @@ async def list_posts(repos: RepoFactory = Depends(get_repos)):
 - **Auth + multi-tenancy**: complete (register, login, JWT, accounts OAuth).
 - **Collector** (`app/modules/collector/`): complete — `collect_source` downloads a public URL to storage and updates `sources`; `POST/GET /api/sources`.
 - **Analytics** (`app/modules/analytics/`): complete — `poll_account` writes account/post insights to `metrics_ts` + upserts `posts`; `poll_tracked` runs keyword search into `trends`. Celery Beat fans out `dispatch_owned_accounts` every 30 min. Routes under `/api/analytics`.
-- **Frontend** (`web/`): complete — Login/Register, Accounts, Sources, Analytics dashboard.
+- **Proxy** (`app/services/proxy.py`): complete — `proxies` collection (passwords Fernet-encrypted), CRUD + connection test at `/api/proxies`, per-account assignment via `PATCH /api/accounts/{id}/proxy`. Resolution model: an account's `proxy_id` wins, else a random `active` proxy from the user's pool. Gated by `PROXY_ENABLED`; `PROXY_APPLY_TO_MEDIA` toggles whether Collector downloads are proxied. Wired into `ThreadsApiClient`, the OAuth provider, and the collector via httpx `proxy=`.
+- **Frontend** (`web/`): complete — Login/Register, Accounts (+ proxy assignment), Sources, Analytics dashboard, Proxies (CRUD + test).
 - **Publisher**: not started.
 
 > Async-in-Celery pattern: each task opens its own short-lived motor client and runs the async service via `asyncio.run` (see `app/workers/tasks.py`), avoiding the API's shared event loop. `metrics_ts` is written directly (not via `TenantRepository`) because `user_id`/`post_id` must live in the time-series `meta` field.

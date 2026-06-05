@@ -12,8 +12,13 @@ class AccountPublic(BaseModel):
     username: Optional[str] = None
     token_expires_at: Optional[datetime] = None
     connected: bool = False  # đã có token (owned) hay chưa
+    proxy_id: Optional[str] = None  # proxy cố định gán cho account (None = pool)
 
 
 class TrackAccountIn(BaseModel):
     platform: str = "threads"
     username: str
+
+
+class AssignProxyIn(BaseModel):
+    proxy_id: Optional[str] = None  # None để gỡ gán (fallback về pool)

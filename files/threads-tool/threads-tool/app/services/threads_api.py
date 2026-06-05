@@ -38,12 +38,18 @@ def _parse_insights(payload: dict) -> dict:
 
 
 class ThreadsApiClient:
-    def __init__(self, access_token: str, base_url: Optional[str] = None):
+    def __init__(
+        self,
+        access_token: str,
+        base_url: Optional[str] = None,
+        proxy: Optional[str] = None,
+    ):
         self._token = access_token
         self._base = base_url or settings.threads_graph_base
+        self._proxy = proxy  # None -> đi trực tiếp
 
     def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(base_url=self._base, timeout=30)
+        return httpx.AsyncClient(base_url=self._base, timeout=30, proxy=self._proxy)
 
     async def _get(self, path: str, params: dict) -> dict:
         params = {**params, "access_token": self._token}

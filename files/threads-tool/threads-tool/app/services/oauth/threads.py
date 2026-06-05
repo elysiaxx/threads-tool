@@ -31,9 +31,9 @@ class ThreadsOAuthProvider:
         }
         return f"{settings.threads_auth_base}/oauth/authorize?{urlencode(params)}"
 
-    async def exchange_code(self, code: str) -> OAuthTokens:
+    async def exchange_code(self, code: str, proxy: str | None = None) -> OAuthTokens:
         async with httpx.AsyncClient(
-            base_url=settings.threads_graph_base, timeout=30
+            base_url=settings.threads_graph_base, timeout=30, proxy=proxy
         ) as client:
             # 1) short-lived token
             short = await client.post(
@@ -69,9 +69,9 @@ class ThreadsOAuthProvider:
                 external_user_id=external_user_id,
             )
 
-    async def refresh(self, access_token: str) -> OAuthTokens:
+    async def refresh(self, access_token: str, proxy: str | None = None) -> OAuthTokens:
         async with httpx.AsyncClient(
-            base_url=settings.threads_graph_base, timeout=30
+            base_url=settings.threads_graph_base, timeout=30, proxy=proxy
         ) as client:
             resp = await client.get(
                 "/refresh_access_token",

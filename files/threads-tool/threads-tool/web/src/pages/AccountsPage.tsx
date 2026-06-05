@@ -2,8 +2,9 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAuthorizeUrl, listAccounts, trackAccount } from "../api/accounts";
 import { pollAccount } from "../api/analytics";
+import { assignProxy, listProxies } from "../api/proxies";
 import { ApiError } from "../api/client";
-import type { Account } from "../types";
+import type { Account, Proxy } from "../types";
 
 export default function AccountsPage() {
   const qc = useQueryClient();
@@ -14,6 +15,16 @@ export default function AccountsPage() {
   const { data: accounts, isLoading } = useQuery({
     queryKey: ["accounts"],
     queryFn: listAccounts,
+  });
+
+  const { data: proxies } = useQuery({ queryKey: ["proxies"], queryFn: listProxies });
+
+  const assign = useMutation({
+    mutationFn: ({ accountId, proxyId }: { accountId: string; proxyId: string | null }) =>
+      assignProxy(accountId, proxyId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : "Không gán được proxy"),
   });
 
   const track = useMutation({
@@ -86,8 +97,12 @@ export default function AccountsPage() {
               <OwnedCard
                 key={a.id}
                 account={a}
+                proxies={proxies ?? []}
                 onPoll={() => poll.mutate(a.id)}
                 polling={poll.isPending}
+                onAssignProxy={(proxyId) =>
+                  assign.mutate({ accountId: a.id, proxyId })
+                }
               />
             ))}
           </div>
@@ -128,12 +143,16 @@ export default function AccountsPage() {
 
 function OwnedCard({
   account,
+  proxies,
   onPoll,
   polling,
+  onAssignProxy,
 }: {
   account: Account;
+  proxies: Proxy[];
   onPoll: () => void;
   polling: boolean;
+  onAssignProxy: (proxyId: string | null) => void;
 }) {
   return (
     <div className="card flex flex-col gap-2">
@@ -156,6 +175,23 @@ function OwnedCard({
           Token hết hạn: {new Date(account.token_expires_at).toLocaleDateString()}
         </p>
       )}
+
+      <label className="mt-1 block text-xs text-gray-500">
+        Proxy
+        <select
+          className="input mt-1 text-sm"
+          value={account.proxy_id ?? ""}
+          onChange={(e) => onAssignProxy(e.target.value || null)}
+        >
+          <option value="">— Pool xoay vòng —</option>
+          {proxies.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label} ({p.protocol})
+            </option>
+          ))}
+        </select>
+      </label>
+
       <button
         className="btn-secondary mt-1 self-start"
         onClick={onPoll}

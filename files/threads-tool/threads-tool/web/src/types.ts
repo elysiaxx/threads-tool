@@ -23,6 +23,40 @@ export interface Account {
   username?: string | null;
   token_expires_at?: string | null;
   connected: boolean;
+  proxy_id?: string | null;
+}
+
+export type ProxyProtocol = "http" | "https" | "socks5";
+
+export interface ProxyCheck {
+  ok: boolean;
+  ip?: string | null;
+  error?: string | null;
+  checked_at?: string | null;
+}
+
+export interface Proxy {
+  id: string;
+  label: string;
+  protocol: ProxyProtocol;
+  host: string;
+  port: number;
+  username?: string | null;
+  has_password: boolean;
+  active: boolean;
+  last_check?: ProxyCheck | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ProxyInput {
+  label: string;
+  protocol: ProxyProtocol;
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+  active: boolean;
 }
 
 export type SourceStatus = "pending" | "ready" | "failed";

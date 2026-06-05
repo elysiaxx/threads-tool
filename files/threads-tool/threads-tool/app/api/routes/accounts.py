@@ -18,7 +18,7 @@ from app.core.deps import CurrentUser, RepoFactory, get_current_user, get_repos
 from app.core.security import create_state_token, verify_state_token
 from app.db.mongo import get_database
 from app.db.repository import TenantRepository
-from app.models.account import AccountPublic, TrackAccountIn
+from app.models.account import AccountPublic, AssignProxyIn, TrackAccountIn
 from app.services.oauth import get_provider
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -33,6 +33,7 @@ def _to_public(doc: dict) -> AccountPublic:
         username=doc.get("username"),
         token_expires_at=doc.get("token_expires_at"),
         connected=bool(doc.get("access_token_enc")),
+        proxy_id=doc.get("proxy_id"),
     )
 
 
@@ -70,6 +71,27 @@ async def track_account(
     )
     doc = await accounts.find_one({"_id": accounts.oid(new_id)})
     return _to_public(doc)
+
+
+@router.patch("/{account_id}/proxy", response_model=AccountPublic)
+async def assign_proxy(
+    account_id: str, payload: AssignProxyIn, repos: RepoFactory = Depends(get_repos)
+):
+    """Gán/gỡ proxy cố định cho account. proxy_id=null -> fallback về pool."""
+    accounts = repos("accounts")
+    acc = await accounts.find_one({"_id": accounts.oid(account_id)})
+    if not acc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account không tồn tại")
+    if payload.proxy_id:
+        proxies = repos("proxies")
+        if not await proxies.find_one({"_id": proxies.oid(payload.proxy_id)}):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Proxy không tồn tại")
+    await accounts.update_one(
+        {"_id": accounts.oid(account_id)},
+        {"$set": {"proxy_id": payload.proxy_id, "updated_at": datetime.now(timezone.utc)}},
+    )
+    updated = await accounts.find_one({"_id": accounts.oid(account_id)})
+    return _to_public(updated)
 
 
 @router.get("/oauth/{platform}/authorize-url")
