@@ -25,6 +25,11 @@ celery_app.conf.beat_schedule = {
         "task": "publisher.dispatch_due_jobs",
         "schedule": 60.0,
     },
+    # Gia hạn token sắp hết hạn: quét 2 lần/ngày.
+    "refresh-tokens-every-12h": {
+        "task": "auth.dispatch_token_refresh",
+        "schedule": 12 * 60 * 60.0,
+    },
 }
 
 # import để task được đăng ký khi worker khởi động

@@ -5,36 +5,57 @@ ghi đúng chủ. Job poll định kỳ phải lặp THEO TỪNG user đang acti
 Collector, Analytics và Publisher đều đã triển khai.
 """
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.config import settings
+from app.db.repository import TenantRepository
+from app.services import token_refresh
+from app.services.http_retry import TransientError, raise_if_transient
 from app.workers.celery_app import celery_app
 
+# Tham số retry chung cho task có gọi mạng: thử lại lỗi tạm thời với lùi thời gian.
+_RETRY = dict(
+    autoretry_for=(TransientError,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=3,
+)
 
-@celery_app.task(name="collector.collect_media")
+
+def _run(coro):
+    """Chạy coroutine; chuyển lỗi mạng/5xx/429 thành TransientError để Celery retry."""
+    try:
+        return asyncio.run(coro)
+    except Exception as exc:  # noqa: BLE001
+        raise_if_transient(exc)
+        raise
+
+
+@celery_app.task(name="collector.collect_media", **_RETRY)
 def collect_media(user_id: str, source_id: str) -> dict:
     """Tải media của một source (pending) rồi cập nhật trạng thái. Xem collector.service."""
     from app.modules.collector.service import collect_source
 
-    return asyncio.run(collect_source(user_id, source_id))
+    return _run(collect_source(user_id, source_id))
 
 
-@celery_app.task(name="analytics.poll_account_metrics")
+@celery_app.task(name="analytics.poll_account_metrics", **_RETRY)
 def poll_account_metrics(user_id: str, account_id: str) -> dict:
     """Poll insights 1 tài khoản owned -> metrics_ts + posts. Xem analytics.service."""
     from app.modules.analytics.service import poll_account
 
-    return asyncio.run(poll_account(user_id, account_id))
+    return _run(poll_account(user_id, account_id))
 
 
-@celery_app.task(name="analytics.poll_tracked")
+@celery_app.task(name="analytics.poll_tracked", **_RETRY)
 def poll_tracked(user_id: str, keyword_or_account: str) -> dict:
     """Keyword search -> trends. Xem analytics.service."""
     from app.modules.analytics.service import poll_tracked as _poll_tracked
 
-    return asyncio.run(_poll_tracked(user_id, keyword_or_account))
+    return _run(_poll_tracked(user_id, keyword_or_account))
 
 
 # --- Dispatcher cho Celery Beat ---------------------------------------------
@@ -65,12 +86,12 @@ def dispatch_owned_accounts() -> dict:
     return {"enqueued": enqueued}
 
 
-@celery_app.task(name="publisher.publish")
+@celery_app.task(name="publisher.publish", **_RETRY)
 def publish(user_id: str, job_id: str) -> dict:
     """Đăng 1 job lên Threads. Xem publisher.service."""
     from app.modules.publisher.service import publish_job
 
-    return asyncio.run(publish_job(user_id, job_id))
+    return _run(publish_job(user_id, job_id))
 
 
 # Dispatcher cấp hệ thống: quét job 'scheduled' đã tới hạn (xuyên tenant) ->
@@ -100,3 +121,55 @@ def dispatch_due_jobs() -> dict:
     """Beat gọi định kỳ: enqueue mọi job hẹn giờ đã tới hạn."""
     enqueued = asyncio.run(_dispatch_due_jobs())
     return {"enqueued": enqueued}
+
+
+# --- Token refresh ----------------------------------------------------------
+async def _refresh_one(user_id: str, account_id: str) -> dict:
+    client = AsyncIOMotorClient(settings.mongo_uri)
+    try:
+        db = client[settings.mongo_db]
+        accounts = TenantRepository(db["accounts"], user_id)
+        acc = await accounts.find_one({"_id": accounts.oid(account_id)})
+        if not acc:
+            return {"status": "failed", "error": "account không tồn tại"}
+        return await token_refresh.refresh_account(db, user_id, acc)
+    finally:
+        client.close()
+
+
+@celery_app.task(name="auth.refresh_account_token", **_RETRY)
+def refresh_account_token(user_id: str, account_id: str) -> dict:
+    """Gia hạn token cho 1 account owned. Xem services.token_refresh."""
+    return _run(_refresh_one(user_id, account_id))
+
+
+# Dispatcher cấp hệ thống: quét account owned sắp hết hạn (xuyên tenant) ->
+# fan-out refresh theo từng (user_id, account_id).
+async def _dispatch_token_refresh() -> int:
+    client = AsyncIOMotorClient(settings.mongo_uri)
+    try:
+        db = client[settings.mongo_db]
+        threshold = datetime.now(timezone.utc) + timedelta(
+            days=settings.token_refresh_threshold_days
+        )
+        cursor = db.accounts.find(
+            {
+                "type": "owned",
+                "access_token_enc": {"$ne": None},
+                "token_expires_at": {"$lte": threshold},
+            },
+            {"_id": 1, "user_id": 1},
+        )
+        count = 0
+        async for acc in cursor:
+            refresh_account_token.delay(acc["user_id"], str(acc["_id"]))
+            count += 1
+        return count
+    finally:
+        client.close()
+
+
+@celery_app.task(name="auth.dispatch_token_refresh")
+def dispatch_token_refresh() -> dict:
+    """Beat gọi định kỳ: refresh mọi token sắp hết hạn."""
+    return {"enqueued": asyncio.run(_dispatch_token_refresh())}

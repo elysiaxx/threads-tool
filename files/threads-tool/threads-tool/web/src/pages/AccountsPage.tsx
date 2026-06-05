@@ -1,6 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getAuthorizeUrl, listAccounts, trackAccount } from "../api/accounts";
+import {
+  getAuthorizeUrl,
+  listAccounts,
+  refreshToken,
+  trackAccount,
+} from "../api/accounts";
 import { pollAccount } from "../api/analytics";
 import { assignProxy, listProxies } from "../api/proxies";
 import { ApiError } from "../api/client";
@@ -42,6 +47,16 @@ export default function AccountsPage() {
     onSuccess: () => setNotice("Đã xếp hàng poll insights cho tài khoản."),
     onError: (e) =>
       setError(e instanceof ApiError ? e.message : "Không poll được"),
+  });
+
+  const refresh = useMutation({
+    mutationFn: (id: string) => refreshToken(id),
+    onSuccess: () => {
+      setNotice("Đã gia hạn token.");
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+    },
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : "Không gia hạn được token"),
   });
 
   async function connectThreads() {
@@ -100,6 +115,8 @@ export default function AccountsPage() {
                 proxies={proxies ?? []}
                 onPoll={() => poll.mutate(a.id)}
                 polling={poll.isPending}
+                onRefresh={() => refresh.mutate(a.id)}
+                refreshing={refresh.isPending}
                 onAssignProxy={(proxyId) =>
                   assign.mutate({ accountId: a.id, proxyId })
                 }
@@ -146,12 +163,16 @@ function OwnedCard({
   proxies,
   onPoll,
   polling,
+  onRefresh,
+  refreshing,
   onAssignProxy,
 }: {
   account: Account;
   proxies: Proxy[];
   onPoll: () => void;
   polling: boolean;
+  onRefresh: () => void;
+  refreshing: boolean;
   onAssignProxy: (proxyId: string | null) => void;
 }) {
   return (
@@ -192,13 +213,22 @@ function OwnedCard({
         </select>
       </label>
 
-      <button
-        className="btn-secondary mt-1 self-start"
-        onClick={onPoll}
-        disabled={!account.connected || polling}
-      >
-        Poll insights
-      </button>
+      <div className="mt-1 flex gap-2">
+        <button
+          className="btn-secondary"
+          onClick={onPoll}
+          disabled={!account.connected || polling}
+        >
+          Poll insights
+        </button>
+        <button
+          className="btn-secondary"
+          onClick={onRefresh}
+          disabled={!account.connected || refreshing}
+        >
+          {refreshing ? "Đang gia hạn…" : "Gia hạn token"}
+        </button>
+      </div>
     </div>
   );
 }

@@ -3,10 +3,15 @@ Analytics: kích hoạt poll thủ công và đọc dữ liệu đã thu thập 
 Poll định kỳ do Celery Beat lo (xem workers/celery_app.py); các endpoint dưới
 đây để chạy ngay hoặc xem kết quả từ UI/mobile.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
 from app.core.deps import RepoFactory, get_repos
+from app.db.mongo import get_database
 from app.workers.tasks import poll_account_metrics, poll_tracked
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -54,3 +59,26 @@ async def list_trends(repos: RepoFactory = Depends(get_repos)):
 async def list_posts(repos: RepoFactory = Depends(get_repos)):
     docs = await repos("posts").find_many(sort=[("published_at", -1)], limit=50)
     return [_public(d) for d in docs]
+
+
+@router.get("/metrics")
+async def list_metrics(
+    post_id: Optional[str] = Query(
+        None, description="threads_media_id; bỏ trống = metrics cấp tài khoản"
+    ),
+    hours: int = Query(168, ge=1, le=24 * 90),
+    repos: RepoFactory = Depends(get_repos),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """
+    Chuỗi thời gian metrics từ metrics_ts. Đọc thẳng collection (time-series),
+    ép meta.user_id để cách ly tenant; meta.post_id=None là cấp tài khoản.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    query = {
+        "meta.user_id": repos.user_id,
+        "meta.post_id": post_id,
+        "ts": {"$gte": cutoff},
+    }
+    cursor = db.metrics_ts.find(query, {"_id": 0, "meta": 0}).sort("ts", 1)
+    return await cursor.to_list(length=5000)

@@ -12,6 +12,12 @@ export function trackAccount(username: string, platform = "threads") {
   });
 }
 
+export function refreshToken(accountId: string) {
+  return request<Account>(`/accounts/${accountId}/refresh-token`, {
+    method: "POST",
+  });
+}
+
 // Lấy authorize URL (JSON, có auth) rồi điều hướng cả trang sang Meta. Không
 // dùng endpoint redirect /start trực tiếp vì navigation không mang Bearer header.
 export async function getAuthorizeUrl(platform = "threads") {

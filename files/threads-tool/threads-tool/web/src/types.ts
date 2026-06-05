@@ -126,6 +126,17 @@ export interface PublishInput {
   scheduled_at?: string | null;
 }
 
+export interface MetricPoint {
+  ts: string;
+  views?: number;
+  likes?: number;
+  replies?: number;
+  reposts?: number;
+  quotes?: number;
+  shares?: number;
+  followers_count?: number;
+}
+
 export interface Post {
   id: string;
   account_id?: string;

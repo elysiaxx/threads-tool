@@ -4,6 +4,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -11,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { listPosts, listTrends, searchKeyword } from "../api/analytics";
+import { listMetrics, listPosts, listTrends, searchKeyword } from "../api/analytics";
 import { ApiError } from "../api/client";
 import type { Post, Trend } from "../types";
 
@@ -53,6 +54,8 @@ export default function AnalyticsPage() {
         <TrendsChart trends={trends} />
       </div>
 
+      <InsightsChart posts={posts} />
+
       <section className="card">
         <h2 className="mb-3 text-lg font-semibold">Tìm kiếm từ khoá</h2>
         <form onSubmit={onSearch} className="flex gap-2">
@@ -76,6 +79,63 @@ export default function AnalyticsPage() {
 
       <TrendsTable trends={trends} />
       <RecentPosts posts={posts} />
+    </div>
+  );
+}
+
+function InsightsChart({ posts }: { posts?: Post[] }) {
+  // "" = cấp tài khoản (post_id rỗng); còn lại là threads_media_id của post.
+  const [selected, setSelected] = useState("");
+
+  const { data: metrics, isFetching } = useQuery({
+    queryKey: ["metrics", selected],
+    queryFn: () => listMetrics(selected || undefined),
+  });
+
+  const data = (metrics ?? []).map((m) => ({
+    ts: new Date(m.ts).toLocaleString(),
+    views: m.views ?? 0,
+    likes: m.likes ?? 0,
+    replies: m.replies ?? 0,
+  }));
+
+  const withMediaId = (posts ?? []).filter((p) => p.threads_media_id);
+
+  return (
+    <div className="card">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">Insights theo thời gian</h2>
+        <select
+          className="input max-w-xs text-sm"
+          value={selected}
+          onChange={(e) => setSelected(e.target.value)}
+        >
+          <option value="">Tài khoản (tổng)</option>
+          {withMediaId.map((p) => (
+            <option key={p.id} value={p.threads_media_id}>
+              {(p.text || p.threads_media_id || "").slice(0, 40)}
+            </option>
+          ))}
+        </select>
+      </div>
+      {data.length === 0 ? (
+        <div className="flex h-[240px] items-center justify-center text-sm text-gray-400">
+          {isFetching ? "Đang tải…" : "Chưa có dữ liệu metrics (chờ poll insights)"}
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="ts" fontSize={11} />
+            <YAxis allowDecimals={false} fontSize={12} />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey="views" stroke="#1d9bf0" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="likes" stroke="#000000" strokeWidth={2} dot={false} />
+            <Line type="monotone" dataKey="replies" stroke="#16a34a" strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
     </div>
   );
 }

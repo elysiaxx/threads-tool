@@ -106,7 +106,9 @@ async def list_posts(repos: RepoFactory = Depends(get_repos)):
 - **Publisher** (`app/modules/publisher/`): complete — `publish_job` runs the Threads 2-step flow (create container → poll until `FINISHED` → `threads_publish`) for TEXT/IMAGE/VIDEO/CAROUSEL, then writes the result to `posts`. Jobs live in the `jobs` collection; `POST /api/publish` creates one (immediate or scheduled), `POST /api/publish/{id}/retry` re-runs a failed one. Scheduled posts are dispatched by the `publisher.dispatch_due_jobs` Beat task (every 1 min) which flips due `scheduled` jobs to `pending` and enqueues `publisher.publish`.
 - **Frontend** (`web/`): complete — Login/Register, Accounts (+ proxy assignment), Sources, Publish (compose + media picker + schedule + job queue), Analytics dashboard, Proxies (CRUD + test).
 
-> Async-in-Celery pattern: each task opens its own short-lived motor client and runs the async service via `asyncio.run` (see `app/workers/tasks.py`), avoiding the API's shared event loop. `metrics_ts` is written directly (not via `TenantRepository`) because `user_id`/`post_id` must live in the time-series `meta` field.
+> Async-in-Celery pattern: each task opens its own short-lived motor client and runs the async service via `asyncio.run` (see `app/workers/tasks.py`), avoiding the API's shared event loop. `metrics_ts` is written directly (not via `TenantRepository`) because `user_id`/`post_id` must live in the time-series `meta` field; reads (`GET /api/analytics/metrics`) likewise query `metrics_ts` directly but force-filter `meta.user_id`.
+
+> Retry: network/5xx/429 failures are wrapped as `http_retry.TransientError` and retried by Celery (`autoretry_for` + exponential backoff, see `_RETRY` in `app/workers/tasks.py`); terminal errors are recorded as `failed` and not retried. Token refresh: `auth.dispatch_token_refresh` Beat task (every 12h) refreshes owned-account tokens within `TOKEN_REFRESH_THRESHOLD_DAYS` of expiry; `POST /api/accounts/{id}/refresh-token` does it on demand.
 
 ## Threads API constraints
 

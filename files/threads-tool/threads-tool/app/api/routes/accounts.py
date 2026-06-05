@@ -19,6 +19,7 @@ from app.core.security import create_state_token, verify_state_token
 from app.db.mongo import get_database
 from app.db.repository import TenantRepository
 from app.models.account import AccountPublic, AssignProxyIn, TrackAccountIn
+from app.services import token_refresh
 from app.services.oauth import get_provider
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -71,6 +72,26 @@ async def track_account(
     )
     doc = await accounts.find_one({"_id": accounts.oid(new_id)})
     return _to_public(doc)
+
+
+@router.post("/{account_id}/refresh-token", response_model=AccountPublic)
+async def refresh_token(
+    account_id: str,
+    repos: RepoFactory = Depends(get_repos),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+):
+    """Gia hạn token Threads của account ngay lập tức (chạy đồng bộ để trả kết quả)."""
+    accounts = repos("accounts")
+    acc = await accounts.find_one({"_id": accounts.oid(account_id)})
+    if not acc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account không tồn tại")
+    result = await token_refresh.refresh_account(db, repos.user_id, acc)
+    if result.get("status") not in ("refreshed",):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, result.get("error") or "Không refresh được"
+        )
+    updated = await accounts.find_one({"_id": accounts.oid(account_id)})
+    return _to_public(updated)
 
 
 @router.patch("/{account_id}/proxy", response_model=AccountPublic)

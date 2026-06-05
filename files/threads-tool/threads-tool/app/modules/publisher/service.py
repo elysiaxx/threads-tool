@@ -19,6 +19,7 @@ from app.config import settings
 from app.core.crypto import decrypt_token
 from app.db.repository import TenantRepository
 from app.services import proxy as proxy_service
+from app.services.http_retry import raise_if_transient
 from app.services.threads_api import ThreadsApiClient
 
 # Chờ container xử lý xong (video có thể lâu): tối đa ~2 phút.
@@ -152,6 +153,7 @@ async def publish_job(user_id: str, job_id: str) -> dict:
             )
             return {"status": "published", "media_id": media_id}
         except Exception as exc:  # noqa: BLE001 - ghi lỗi vào job để user thấy
+            raise_if_transient(exc)  # lỗi mạng/5xx/429 -> để Celery retry
             await jobs.update_one(
                 {"_id": jobs.oid(job_id)},
                 {

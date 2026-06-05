@@ -20,6 +20,7 @@ from app.config import settings
 from app.db.repository import TenantRepository
 from app.services import proxy as proxy_service
 from app.services import storage
+from app.services.http_retry import raise_if_transient
 
 # Giới hạn tải để tránh kéo file khổng lồ về worker (Threads: ảnh ≤8MB, video ≤1GB).
 _MAX_BYTES = 1024 * 1024 * 1024  # 1 GB
@@ -101,6 +102,7 @@ async def collect_source(user_id: str, source_id: str) -> dict:
             )
             return {"status": "ready", "media_url": media_url, "size": len(data)}
         except Exception as exc:  # noqa: BLE001 - ghi lỗi vào doc để user thấy
+            raise_if_transient(exc)  # lỗi mạng -> để Celery retry, chưa đánh failed
             await repo.update_one(
                 {"_id": repo.oid(source_id)},
                 {

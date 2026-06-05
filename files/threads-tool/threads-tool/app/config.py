@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Token encryption (Fernet). Sinh bằng Fernet.generate_key().
     token_encryption_key: str = ""
 
+    # Refresh token Threads trước khi hết hạn bao nhiêu ngày (token sống ~60 ngày).
+    token_refresh_threshold_days: int = 7
+
     # Redis / Celery
     redis_url: str = "redis://localhost:6379/0"
 
