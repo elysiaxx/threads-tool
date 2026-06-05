@@ -72,6 +72,16 @@ async def track_account(
     return _to_public(doc)
 
 
+@router.get("/oauth/{platform}/authorize-url")
+async def oauth_authorize_url(
+    platform: str, user: CurrentUser = Depends(get_current_user)
+):
+    """Trả authorize URL dạng JSON để frontend (gửi kèm Bearer) tự điều hướng."""
+    provider = _provider_or_404(platform)
+    state = create_state_token(user.user_id)
+    return {"url": provider.authorize_url(state)}
+
+
 @router.get("/oauth/{platform}/start")
 async def oauth_start(platform: str, user: CurrentUser = Depends(get_current_user)):
     provider = _provider_or_404(platform)

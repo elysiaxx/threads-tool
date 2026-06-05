@@ -5,3 +5,8 @@ __pycache__/
 venv/
 *.egg-info/
 .minio/
+
+# Celery Beat runtime state (shelve DB) — not source
+celerybeat-schedule
+celerybeat-schedule.*
+celerybeat.pid

@@ -4,7 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project layout
 
-The application source lives in `files/threads-tool/threads-tool/`. The `files/threads_env/` directory is a local Python venv used only for ad-hoc scripts; the main app runs entirely inside Docker.
+The backend source lives in `files/threads-tool/threads-tool/` (FastAPI under `app/`). The React frontend lives in `files/threads-tool/threads-tool/web/` (Vite + TypeScript + Tailwind). The `files/threads_env/` directory is a local Python venv used only for ad-hoc scripts; the main app runs entirely inside Docker.
+
+### Frontend (`web/`)
+
+Vite + React 18 + TypeScript + Tailwind + React Router + React Query (data fetching/polling) + Recharts (charts). Run from `web/`:
+
+```bash
+npm install
+npm run dev      # http://localhost:5173 — proxies /api to the backend on :8000
+npm run build    # tsc --noEmit + vite build -> dist/
+```
+
+- API client (`src/api/client.ts`) attaches the JWT from `localStorage` and clears it on 401.
+- `VITE_API_BASE` (in `.env`) overrides the API base; empty means `/api` via the Vite dev proxy.
+- Pages: Login, Register, Accounts (OAuth connect + tracked accounts + poll), Sources (add media + auto-refresh status), Analytics (charts + keyword search + trends/posts).
+- OAuth from the SPA uses `GET /accounts/oauth/{platform}/authorize-url` (returns the authorize URL as JSON) because a full-page redirect can't carry the `Authorization` header.
 
 ## Common commands
 
@@ -76,16 +91,20 @@ async def list_posts(repos: RepoFactory = Depends(get_repos)):
 | `app/core/crypto.py` | Fernet encryption/decryption for Threads access tokens |
 | `app/db/indexes.py` | MongoDB indexes (always start with `user_id`) + `metrics_ts` time-series collection |
 | `app/services/oauth/threads.py` | Threads OAuth: authorize URL, code exchange, token refresh |
+| `app/services/threads_api.py` | Threads Graph API read client (threads list, insights, keyword search) |
 | `app/services/storage.py` | S3-compatible upload with prefix `media/{user_id}/...` |
-| `app/workers/tasks.py` | Celery task stubs (Collector + Analytics, not yet implemented) |
+| `app/workers/tasks.py` | Celery tasks: `collect_media`, `poll_account_metrics`, `poll_tracked`, Beat dispatcher |
 | `app/config.py` | All settings via `pydantic-settings` / `.env` |
 
 ## Module status
 
 - **Auth + multi-tenancy**: complete (register, login, JWT, accounts OAuth).
-- **Collector** (`app/modules/collector/`): stub — `collect_media` task raises `NotImplementedError`.
-- **Analytics** (`app/modules/analytics/`): stub — `poll_account_metrics` and `poll_tracked` raise `NotImplementedError`.
+- **Collector** (`app/modules/collector/`): complete — `collect_source` downloads a public URL to storage and updates `sources`; `POST/GET /api/sources`.
+- **Analytics** (`app/modules/analytics/`): complete — `poll_account` writes account/post insights to `metrics_ts` + upserts `posts`; `poll_tracked` runs keyword search into `trends`. Celery Beat fans out `dispatch_owned_accounts` every 30 min. Routes under `/api/analytics`.
+- **Frontend** (`web/`): complete — Login/Register, Accounts, Sources, Analytics dashboard.
 - **Publisher**: not started.
+
+> Async-in-Celery pattern: each task opens its own short-lived motor client and runs the async service via `asyncio.run` (see `app/workers/tasks.py`), avoiding the API's shared event loop. `metrics_ts` is written directly (not via `TenantRepository`) because `user_id`/`post_id` must live in the time-series `meta` field.
 
 ## Threads API constraints
 
