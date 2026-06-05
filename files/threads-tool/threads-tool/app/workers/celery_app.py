@@ -20,6 +20,11 @@ celery_app.conf.beat_schedule = {
         "task": "analytics.dispatch_owned_accounts",
         "schedule": 30 * 60.0,
     },
+    # Bài hẹn giờ: quét job tới hạn mỗi phút để đăng đúng lúc.
+    "publish-due-jobs-every-1m": {
+        "task": "publisher.dispatch_due_jobs",
+        "schedule": 60.0,
+    },
 }
 
 # import để task được đăng ký khi worker khởi động

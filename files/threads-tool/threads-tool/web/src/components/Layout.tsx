@@ -5,6 +5,7 @@ const NAV = [
   { to: "/analytics", label: "Analytics" },
   { to: "/accounts", label: "Tài khoản" },
   { to: "/sources", label: "Media" },
+  { to: "/publish", label: "Đăng bài" },
   { to: "/proxies", label: "Proxy" },
 ];
 

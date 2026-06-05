@@ -88,6 +88,44 @@ export interface Trend {
   top: TrendTopItem[];
 }
 
+export type JobStatus =
+  | "scheduled"
+  | "pending"
+  | "publishing"
+  | "published"
+  | "failed";
+
+export type MediaType = "TEXT" | "IMAGE" | "VIDEO" | "CAROUSEL";
+
+export interface PublishMediaItem {
+  source_id?: string | null;
+  url: string;
+  kind: "image" | "video";
+}
+
+export interface Job {
+  id: string;
+  account_id: string;
+  text?: string | null;
+  media: PublishMediaItem[];
+  media_type: MediaType;
+  status: JobStatus;
+  scheduled_at?: string | null;
+  published_media_id?: string | null;
+  permalink?: string | null;
+  error?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  published_at?: string | null;
+}
+
+export interface PublishInput {
+  account_id: string;
+  text?: string;
+  source_ids: string[];
+  scheduled_at?: string | null;
+}
+
 export interface Post {
   id: string;
   account_id?: string;

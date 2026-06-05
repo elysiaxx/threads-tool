@@ -58,6 +58,15 @@ class ThreadsApiClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def _post(self, path: str, params: dict) -> dict:
+        # Graph API nhận tham số POST qua query string; bỏ giá trị None.
+        params = {k: v for k, v in params.items() if v is not None}
+        params["access_token"] = self._token
+        async with self._client() as client:
+            resp = await client.post(path, params=params)
+            resp.raise_for_status()
+            return resp.json()
+
     async def list_threads(self, threads_user_id: str, limit: int = 25) -> list[dict]:
         """Danh sách post của tài khoản owned."""
         data = await self._get(
@@ -88,3 +97,46 @@ class ThreadsApiClient:
             {"q": query, "search_type": search_type, "fields": _THREAD_FIELDS},
         )
         return data.get("data", [])
+
+    # --- Publishing (2 bước: tạo container -> publish) ----------------------
+    async def create_container(
+        self,
+        threads_user_id: str,
+        *,
+        media_type: str,
+        text: Optional[str] = None,
+        image_url: Optional[str] = None,
+        video_url: Optional[str] = None,
+        children: Optional[list[str]] = None,
+        is_carousel_item: bool = False,
+    ) -> str:
+        """Tạo media container, trả về creation_id (id container)."""
+        data = await self._post(
+            f"/{threads_user_id}/threads",
+            {
+                "media_type": media_type,
+                "text": text,
+                "image_url": image_url,
+                "video_url": video_url,
+                "children": ",".join(children) if children else None,
+                "is_carousel_item": "true" if is_carousel_item else None,
+            },
+        )
+        return data["id"]
+
+    async def container_status(self, container_id: str) -> dict:
+        """Trạng thái xử lý container: {status, error_message}. Video cần FINISHED."""
+        return await self._get(
+            f"/{container_id}", {"fields": "status,error_message"}
+        )
+
+    async def publish_container(self, threads_user_id: str, creation_id: str) -> str:
+        """Publish container đã sẵn sàng, trả về id post đã đăng."""
+        data = await self._post(
+            f"/{threads_user_id}/threads_publish", {"creation_id": creation_id}
+        )
+        return data["id"]
+
+    async def get_media(self, media_id: str) -> dict:
+        """Lấy metadata 1 post (permalink, timestamp…)."""
+        return await self._get(f"/{media_id}", {"fields": _THREAD_FIELDS})

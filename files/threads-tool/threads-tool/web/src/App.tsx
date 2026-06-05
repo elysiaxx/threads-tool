@@ -8,6 +8,7 @@ import AccountsPage from "./pages/AccountsPage";
 import SourcesPage from "./pages/SourcesPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import ProxiesPage from "./pages/ProxiesPage";
+import PublishPage from "./pages/PublishPage";
 
 export default function App() {
   const { loading } = useAuth();
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/accounts" element={<AccountsPage />} />
         <Route path="/sources" element={<SourcesPage />} />
+        <Route path="/publish" element={<PublishPage />} />
         <Route path="/proxies" element={<ProxiesPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
