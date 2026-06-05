@@ -39,6 +39,12 @@ services:
     depends_on: [redis]
     volumes: ["./:/code"]
 
+  # Frontend production: build tĩnh + nginx (proxy /api -> api:8000).
+  web:
+    build: ./web
+    ports: ["8080:80"]
+    depends_on: [api]
+
 volumes:
   mongo_data:
   minio_data:
