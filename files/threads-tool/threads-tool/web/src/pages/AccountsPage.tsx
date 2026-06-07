@@ -2,18 +2,24 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getAuthorizeUrl,
+  listPublicPosts,
   listAccounts,
   refreshToken,
+  syncPublicAccount,
   trackAccount,
 } from "../api/accounts";
 import { pollAccount } from "../api/analytics";
 import { assignProxy, listProxies } from "../api/proxies";
 import { ApiError } from "../api/client";
-import type { Account, Proxy } from "../types";
+import type { Account, Proxy, ThreadsPublicPost } from "../types";
 
 export default function AccountsPage() {
   const qc = useQueryClient();
   const [username, setUsername] = useState("");
+  const [activeTrackedId, setActiveTrackedId] = useState<string | null>(null);
+  const [publicPostKind, setPublicPostKind] = useState<"threads" | "replies">(
+    "threads"
+  );
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -23,6 +29,12 @@ export default function AccountsPage() {
   });
 
   const { data: proxies } = useQuery({ queryKey: ["proxies"], queryFn: listProxies });
+
+  const { data: publicPosts, isFetching: loadingPublicPosts } = useQuery({
+    queryKey: ["accounts", activeTrackedId, "public-posts", publicPostKind],
+    queryFn: () => listPublicPosts(activeTrackedId!, publicPostKind),
+    enabled: Boolean(activeTrackedId),
+  });
 
   const assign = useMutation({
     mutationFn: ({ accountId, proxyId }: { accountId: string; proxyId: string | null }) =>
@@ -57,6 +69,21 @@ export default function AccountsPage() {
     },
     onError: (e) =>
       setError(e instanceof ApiError ? e.message : "Không gia hạn được token"),
+  });
+
+  const syncPublic = useMutation({
+    mutationFn: (id: string) => syncPublicAccount(id),
+    onSuccess: () => {
+      setNotice("Đã đồng bộ profile public.");
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      if (activeTrackedId) {
+        qc.invalidateQueries({
+          queryKey: ["accounts", activeTrackedId, "public-posts"],
+        });
+      }
+    },
+    onError: (e) =>
+      setError(e instanceof ApiError ? e.message : "Không đồng bộ được profile"),
   });
 
   async function connectThreads() {
@@ -142,18 +169,32 @@ export default function AccountsPage() {
         {tracked.length === 0 ? (
           <p className="text-sm text-gray-500">Chưa theo dõi tài khoản nào.</p>
         ) : (
-          <ul className="flex flex-wrap gap-2">
+          <div className="grid gap-3 sm:grid-cols-2">
             {tracked.map((a) => (
-              <li
+              <TrackedCard
                 key={a.id}
-                className="rounded-full border border-gray-300 bg-white px-3 py-1 text-sm"
-              >
-                @{a.username}
-              </li>
+                account={a}
+                active={activeTrackedId === a.id}
+                syncing={syncPublic.isPending}
+                onSync={() => syncPublic.mutate(a.id)}
+                onShow={(kind) => {
+                  setPublicPostKind(kind);
+                  setActiveTrackedId(a.id);
+                }}
+              />
             ))}
-          </ul>
+          </div>
         )}
       </section>
+
+      {activeTrackedId && (
+        <PublicPostsPanel
+          kind={publicPostKind}
+          posts={publicPosts ?? []}
+          loading={loadingPublicPosts}
+          onKindChange={setPublicPostKind}
+        />
+      )}
     </div>
   );
 }
@@ -230,5 +271,147 @@ function OwnedCard({
         </button>
       </div>
     </div>
+  );
+}
+
+function formatCount(value?: number | null) {
+  if (value === null || value === undefined) return "—";
+  return new Intl.NumberFormat("vi-VN", { notation: "compact" }).format(value);
+}
+
+function TrackedCard({
+  account,
+  active,
+  syncing,
+  onSync,
+  onShow,
+}: {
+  account: Account;
+  active: boolean;
+  syncing: boolean;
+  onSync: () => void;
+  onShow: (kind: "threads" | "replies") => void;
+}) {
+  return (
+    <div className={`card flex flex-col gap-3 ${active ? "ring-1 ring-black" : ""}`}>
+      <div className="flex items-start gap-3">
+        {account.profile_pic_url ? (
+          <img
+            src={account.profile_pic_url}
+            alt=""
+            className="h-11 w-11 rounded-full object-cover"
+          />
+        ) : (
+          <div className="h-11 w-11 rounded-full bg-gray-200" />
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium">
+            {account.full_name || `@${account.username}`}
+          </div>
+          <div className="truncate text-sm text-gray-500">@{account.username}</div>
+        </div>
+      </div>
+
+      {account.biography && (
+        <p className="line-clamp-2 text-sm text-gray-700">{account.biography}</p>
+      )}
+
+      <div className="grid grid-cols-2 gap-2 text-sm">
+        <div>
+          <div className="text-xs text-gray-500">Followers</div>
+          <div className="font-medium">{formatCount(account.follower_count)}</div>
+        </div>
+        <div>
+          <div className="text-xs text-gray-500">Threads</div>
+          <div className="font-medium">{formatCount(account.media_count)}</div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <button className="btn-secondary" onClick={() => onShow("threads")}>
+          Xem bài
+        </button>
+        <button className="btn-secondary" onClick={() => onShow("replies")}>
+          Xem replies
+        </button>
+        <button className="btn-secondary" disabled={syncing} onClick={onSync}>
+          {syncing ? "Đang đồng bộ…" : "Đồng bộ"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PublicPostsPanel({
+  kind,
+  posts,
+  loading,
+  onKindChange,
+}: {
+  kind: "threads" | "replies";
+  posts: ThreadsPublicPost[];
+  loading: boolean;
+  onKindChange: (kind: "threads" | "replies") => void;
+}) {
+  return (
+    <section>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold">Bài viết public</h2>
+        <div className="inline-flex rounded-md border border-gray-300 bg-white p-1">
+          {(["threads", "replies"] as const).map((item) => (
+            <button
+              key={item}
+              className={`rounded px-3 py-1 text-sm ${
+                kind === item ? "bg-black text-white" : "text-gray-700"
+              }`}
+              onClick={() => onKindChange(item)}
+            >
+              {item === "threads" ? "Bài viết" : "Replies"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-gray-500">Đang tải bài viết…</p>
+      ) : posts.length === 0 ? (
+        <p className="text-sm text-gray-500">Chưa có dữ liệu public.</p>
+      ) : (
+        <div className="grid gap-3">
+          {posts.map((post, index) => (
+            <article key={post.id || post.code || index} className="card">
+              <div className="mb-2 flex items-center justify-between gap-3 text-sm text-gray-500">
+                <span>@{post.user.username}</span>
+                {post.permalink && (
+                  <a
+                    href={post.permalink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-gray-900 underline"
+                  >
+                    Mở Threads
+                  </a>
+                )}
+              </div>
+              {post.text && <p className="whitespace-pre-wrap text-sm">{post.text}</p>}
+              {post.image_url && (
+                <img
+                  src={post.image_url}
+                  alt=""
+                  className="mt-3 max-h-72 rounded-md object-cover"
+                />
+              )}
+              <div className="mt-3 flex flex-wrap gap-3 text-xs text-gray-500">
+                <span>{formatCount(post.like_count)} likes</span>
+                <span>{formatCount(post.reply_count)} replies</span>
+                {post.taken_at && (
+                  <span>{new Date(post.taken_at).toLocaleString()}</span>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

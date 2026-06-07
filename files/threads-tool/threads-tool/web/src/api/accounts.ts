@@ -1,5 +1,5 @@
 import { request } from "./client";
-import type { Account } from "../types";
+import type { Account, ThreadsPublicPost } from "../types";
 
 export function listAccounts() {
   return request<Account[]>("/accounts");
@@ -16,6 +16,22 @@ export function refreshToken(accountId: string) {
   return request<Account>(`/accounts/${accountId}/refresh-token`, {
     method: "POST",
   });
+}
+
+export function syncPublicAccount(accountId: string) {
+  return request<Account>(`/accounts/${accountId}/sync-public`, {
+    method: "POST",
+  });
+}
+
+export function listPublicPosts(
+  accountId: string,
+  kind: "threads" | "replies" = "threads"
+) {
+  const qs = new URLSearchParams({ kind });
+  return request<ThreadsPublicPost[]>(
+    `/accounts/${accountId}/public-posts?${qs.toString()}`
+  );
 }
 
 // Lấy authorize URL (JSON, có auth) rồi điều hướng cả trang sang Meta. Không

@@ -54,6 +54,6 @@ curl localhost:8000/api/accounts -H "Authorization: Bearer <TOKEN>"
 ## Còn để lại (stub / TODO)
 
 - `modules/collector`, `modules/analytics`: chưa triển khai.
-- `services/oauth/threads.py`: tên endpoint/tham số theo luồng Meta đã tài liệu hóa —
-  **đối chiếu lại docs hiện hành** trước khi chạy thật.
+- `services/oauth/threads.py`: dùng Authlib làm OAuth 2 client; các endpoint
+  long-lived/refresh vẫn theo luồng Threads Graph API chính thức.
 - Publish/Threads container: làm sau theo kế hoạch.

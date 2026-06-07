@@ -1,16 +1,15 @@
 """
-Provider cho Threads. Luồng chuẩn:
+Provider cho Threads dùng Authlib làm OAuth 2 client. Luồng chuẩn:
   1. authorize_url -> user cấp quyền
   2. exchange_code -> short-lived token -> đổi sang long-lived (~60 ngày)
   3. refresh -> gia hạn long-lived token
 
-LƯU Ý: tên endpoint/tham số dựa trên luồng Threads/Meta Graph được tài liệu hóa,
-NÊN đối chiếu lại với docs hiện hành trước khi chạy thật (API còn thay đổi nhanh).
+Threads vẫn bắt buộc dùng authorization server/token endpoint của Meta để cấp token
+cho API chính thức; Authlib thay phần tự build URL và tự exchange OAuth code.
 """
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
 
-import httpx
+from authlib.integrations.httpx_client import AsyncOAuth2Client, OAuth2Client
 
 from app.config import settings
 from app.services.oauth.base import OAuthTokens
@@ -21,39 +20,74 @@ _SIXTY_DAYS = 60 * 24 * 3600
 class ThreadsOAuthProvider:
     name = "threads"
 
+    @property
+    def _authorization_endpoint(self) -> str:
+        return f"{settings.threads_auth_base.rstrip('/')}/oauth/authorize"
+
+    @property
+    def _token_endpoint(self) -> str:
+        return f"{settings.threads_graph_base.rstrip('/')}/oauth/access_token"
+
+    @property
+    def _long_lived_token_endpoint(self) -> str:
+        return f"{settings.threads_graph_base.rstrip('/')}/access_token"
+
+    @property
+    def _refresh_endpoint(self) -> str:
+        return f"{settings.threads_graph_base.rstrip('/')}/refresh_access_token"
+
+    def _oauth_client(self, proxy: str | None = None) -> AsyncOAuth2Client:
+        client = AsyncOAuth2Client(
+            client_id=settings.threads_client_id,
+            client_secret=settings.threads_client_secret,
+            redirect_uri=settings.threads_redirect_uri,
+            scope=settings.threads_scopes,
+            token_endpoint_auth_method="client_secret_post",
+            timeout=30,
+            proxy=proxy,
+        )
+        client.register_compliance_hook(
+            "access_token_response", self._ensure_token_type
+        )
+        return client
+
+    @staticmethod
+    def _ensure_token_type(resp):
+        data = resp.json()
+        if "access_token" in data and "token_type" not in data:
+            data = {**data, "token_type": "bearer"}
+            resp.json = lambda: data
+        return resp
+
     def authorize_url(self, state: str) -> str:
-        params = {
-            "client_id": settings.threads_client_id,
-            "redirect_uri": settings.threads_redirect_uri,
-            "scope": settings.threads_scopes,
-            "response_type": "code",
-            "state": state,
-        }
-        return f"{settings.threads_auth_base}/oauth/authorize?{urlencode(params)}"
+        with OAuth2Client(
+            client_id=settings.threads_client_id,
+            redirect_uri=settings.threads_redirect_uri,
+            scope=settings.threads_scopes,
+        ) as client:
+            url, _ = client.create_authorization_url(
+                self._authorization_endpoint,
+                response_type="code",
+                state=state,
+            )
+            return url
 
     async def exchange_code(self, code: str, proxy: str | None = None) -> OAuthTokens:
-        async with httpx.AsyncClient(
-            base_url=settings.threads_graph_base, timeout=30, proxy=proxy
-        ) as client:
-            # 1) short-lived token
-            short = await client.post(
-                "/oauth/access_token",
-                data={
-                    "client_id": settings.threads_client_id,
-                    "client_secret": settings.threads_client_secret,
-                    "grant_type": "authorization_code",
-                    "redirect_uri": settings.threads_redirect_uri,
-                    "code": code,
-                },
+        async with self._oauth_client(proxy=proxy) as client:
+            short_data = await client.fetch_token(
+                self._token_endpoint,
+                grant_type="authorization_code",
+                code=code,
+                redirect_uri=settings.threads_redirect_uri,
             )
-            short.raise_for_status()
-            sdata = short.json()
-            short_token = sdata["access_token"]
-            external_user_id = str(sdata.get("user_id", "")) or None
 
-            # 2) đổi sang long-lived (~60 ngày)
+        short_token = short_data["access_token"]
+        external_user_id = str(short_data.get("user_id", "")) or None
+
+        async with self._oauth_client(proxy=proxy) as client:
+            # Threads dùng grant_type riêng cho bước đổi short-lived -> long-lived.
             long = await client.get(
-                "/access_token",
+                self._long_lived_token_endpoint,
                 params={
                     "grant_type": "th_exchange_token",
                     "client_secret": settings.threads_client_secret,
@@ -70,11 +104,9 @@ class ThreadsOAuthProvider:
             )
 
     async def refresh(self, access_token: str, proxy: str | None = None) -> OAuthTokens:
-        async with httpx.AsyncClient(
-            base_url=settings.threads_graph_base, timeout=30, proxy=proxy
-        ) as client:
+        async with self._oauth_client(proxy=proxy) as client:
             resp = await client.get(
-                "/refresh_access_token",
+                self._refresh_endpoint,
                 params={
                     "grant_type": "th_refresh_token",
                     "access_token": access_token,

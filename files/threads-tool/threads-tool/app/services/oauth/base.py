@@ -24,10 +24,14 @@ class OAuthProvider(Protocol):
         """URL để redirect user sang trang cấp quyền."""
         ...
 
-    async def exchange_code(self, code: str) -> OAuthTokens:
+    async def exchange_code(
+        self, code: str, proxy: Optional[str] = None
+    ) -> OAuthTokens:
         """Đổi authorization code lấy (long-lived) access token."""
         ...
 
-    async def refresh(self, access_token: str) -> OAuthTokens:
+    async def refresh(
+        self, access_token: str, proxy: Optional[str] = None
+    ) -> OAuthTokens:
         """Gia hạn token trước khi hết hạn (~60 ngày với Threads)."""
         ...
