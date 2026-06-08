@@ -30,6 +30,11 @@ celery_app.conf.beat_schedule = {
         "task": "auth.dispatch_token_refresh",
         "schedule": 12 * 60 * 60.0,
     },
+    # Trend Radar: thu thập public posts của watchlist mỗi 60 phút.
+    "radar-collect-tracked-every-60m": {
+        "task": "radar.dispatch_tracked",
+        "schedule": 60 * 60.0,
+    },
 }
 
 # import để task được đăng ký khi worker khởi động

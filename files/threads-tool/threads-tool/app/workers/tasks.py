@@ -86,6 +86,36 @@ def dispatch_owned_accounts() -> dict:
     return {"enqueued": enqueued}
 
 
+@celery_app.task(name="radar.collect_tracked_public", **_RETRY)
+def collect_tracked_public(user_id: str) -> dict:
+    """Thu thập public posts của watchlist 1 user -> public_posts. Xem trends.service."""
+    from app.modules.trends.service import collect_tracked
+
+    return _run(collect_tracked(user_id))
+
+
+# Dispatcher cấp hệ thống: quét user có tracked account (xuyên tenant) -> fan-out
+# collect theo từng user. Dùng distinct user_id để không enqueue trùng.
+async def _dispatch_radar() -> int:
+    client = AsyncIOMotorClient(settings.mongo_uri)
+    try:
+        db = client[settings.mongo_db]
+        user_ids = await db.accounts.distinct(
+            "user_id", {"type": "tracked", "platform": "threads"}
+        )
+        for uid in user_ids:
+            collect_tracked_public.delay(uid)
+        return len(user_ids)
+    finally:
+        client.close()
+
+
+@celery_app.task(name="radar.dispatch_tracked")
+def dispatch_radar() -> dict:
+    """Beat gọi định kỳ: fan-out thu thập public posts cho mọi user có watchlist."""
+    return {"enqueued": asyncio.run(_dispatch_radar())}
+
+
 @celery_app.task(name="publisher.publish", **_RETRY)
 def publish(user_id: str, job_id: str) -> dict:
     """Đăng 1 job lên Threads. Xem publisher.service."""

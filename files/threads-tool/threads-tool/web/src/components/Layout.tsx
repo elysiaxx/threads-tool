@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext";
 
 const NAV = [
   { to: "/analytics", label: "Analytics" },
+  { to: "/radar", label: "Xu hướng" },
   { to: "/accounts", label: "Tài khoản" },
   { to: "/sources", label: "Media" },
   { to: "/publish", label: "Đăng bài" },

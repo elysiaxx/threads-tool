@@ -155,6 +155,62 @@ export interface PublishInput {
   scheduled_at?: string | null;
 }
 
+// --- Trend Radar -------------------------------------------------------------
+export interface RadarSettings {
+  min_likes: number;
+  min_engagement: number;
+  max_age_hours: number;
+  reply_weight: number;
+  quote_weight: number;
+  gravity: number;
+  min_score: number;
+  top_n: number;
+}
+
+export interface RadarAuthor {
+  id?: string | null;
+  username?: string | null;
+  full_name?: string | null;
+  profile_pic_url?: string | null;
+  is_verified?: boolean | null;
+}
+
+export interface RadarPost {
+  id: string;
+  account_id?: string | null;
+  permalink?: string | null;
+  text?: string | null;
+  taken_at?: string | null;
+  media_type?: string | null;
+  image_url?: string | null;
+  like_count: number;
+  reply_count: number;
+  quote_count: number;
+  engagement: number;
+  score: number;
+  velocity?: number | null;
+  age_hours?: number | null;
+  collected_at?: string | null;
+  author: RadarAuthor;
+}
+
+export interface RadarBucket {
+  label: string;
+  count: number;
+  engagement: number;
+}
+
+export interface RadarStats {
+  tracked_posts: number;
+  trending_posts: number;
+  source_accounts: number;
+  avg_engagement: number;
+  by_account: RadarBucket[];
+  by_media_type: RadarBucket[];
+  timeline: RadarBucket[];
+  last_collected_at?: string | null;
+}
+
 export interface MetricPoint {
   ts: string;
   views?: number;

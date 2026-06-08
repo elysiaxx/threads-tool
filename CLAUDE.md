@@ -69,7 +69,7 @@ Celery handles all heavy/long tasks (media download, publish, periodic metric po
 
 ## Critical pattern: multi-tenancy via TenantRepository
 
-Every user-owned collection (`accounts`, `sources`, `jobs`, `posts`, `searches`, `trends`) **must** be accessed only through `TenantRepository` (`app/db/repository.py`). It hard-injects `user_id` into every read filter and every written document. Bypassing it and touching a raw Motor collection is a data-leak bug.
+Every user-owned collection (`accounts`, `sources`, `jobs`, `posts`, `searches`, `trends`, `public_posts`, `trend_settings`) **must** be accessed only through `TenantRepository` (`app/db/repository.py`). It hard-injects `user_id` into every read filter and every written document. Bypassing it and touching a raw Motor collection is a data-leak bug.
 
 In routes, get repositories via the `RepoFactory` dependency:
 ```python
@@ -92,6 +92,8 @@ async def list_posts(repos: RepoFactory = Depends(get_repos)):
 | `app/db/indexes.py` | MongoDB indexes (always start with `user_id`) + `metrics_ts` time-series collection |
 | `app/services/oauth/threads.py` | Threads OAuth: authorize URL, code exchange, token refresh |
 | `app/services/threads_api.py` | Threads Graph API read client (threads list, insights, keyword search) |
+| `app/services/threads_public.py` | Unofficial public Threads reader (no OAuth): profile, public posts, single post via web GraphQL |
+| `app/modules/trends/service.py` | Trend Radar: collect watchlist public posts → `public_posts`, score/rank trending |
 | `app/services/proxy.py` | Proxy resolution (per-account fixed → rotating pool fallback) + connection test |
 | `app/services/storage.py` | S3-compatible upload with prefix `media/{user_id}/...` |
 | `app/workers/tasks.py` | Celery tasks: `collect_media`, `poll_account_metrics`, `poll_tracked`, Beat dispatcher |
@@ -104,7 +106,8 @@ async def list_posts(repos: RepoFactory = Depends(get_repos)):
 - **Analytics** (`app/modules/analytics/`): complete — `poll_account` writes account/post insights to `metrics_ts` + upserts `posts`; `poll_tracked` runs keyword search into `trends`. Celery Beat fans out `dispatch_owned_accounts` every 30 min. Routes under `/api/analytics`.
 - **Proxy** (`app/services/proxy.py`): complete — `proxies` collection (passwords Fernet-encrypted), CRUD + connection test at `/api/proxies`, per-account assignment via `PATCH /api/accounts/{id}/proxy`. Resolution model: an account's `proxy_id` wins, else a random `active` proxy from the user's pool. Gated by `PROXY_ENABLED`; `PROXY_APPLY_TO_MEDIA` toggles whether Collector downloads are proxied. Wired into `ThreadsApiClient`, the OAuth provider, and the collector via httpx `proxy=`.
 - **Publisher** (`app/modules/publisher/`): complete — `publish_job` runs the Threads 2-step flow (create container → poll until `FINISHED` → `threads_publish`) for TEXT/IMAGE/VIDEO/CAROUSEL, then writes the result to `posts`. Jobs live in the `jobs` collection; `POST /api/publish` creates one (immediate or scheduled), `POST /api/publish/{id}/retry` re-runs a failed one. Scheduled posts are dispatched by the `publisher.dispatch_due_jobs` Beat task (every 1 min) which flips due `scheduled` jobs to `pending` and enqueues `publisher.publish`.
-- **Frontend** (`web/`): complete — Login/Register, Accounts (+ proxy assignment), Sources, Publish (compose + media picker + schedule + job queue), Analytics dashboard, Proxies (CRUD + test).
+- **Trend Radar** (`app/modules/trends/`): complete — tracks public content from the watchlist (`tracked` accounts) via the unofficial `threads_public.ThreadsPublicClient` (no OAuth). `collect_tracked` snapshots each tracked account's public posts into `public_posts` (keeping the previous snapshot for velocity). Trending **score = engagement / (age_hours + 2)^gravity** is computed at read time from configurable thresholds in `trend_settings` (one doc/tenant), so changing thresholds re-ranks instantly. Routes under `/api/radar` (`GET/PUT /settings`, `POST /collect`, `GET /posts`, `GET /stats`). Beat task `radar.dispatch_tracked` fans out collection every 60 min. UI is the **"Xu hướng"** page (`/radar`): threshold controls + bar/line stats + ranked table. See `docs/trend-radar.md`.
+- **Frontend** (`web/`): complete — Login/Register, Accounts (+ proxy assignment + public posts), Sources, Publish (compose + media picker + schedule + job queue), Analytics dashboard, Trend Radar (`/radar`), Proxies (CRUD + test).
 
 > Async-in-Celery pattern: each task opens its own short-lived motor client and runs the async service via `asyncio.run` (see `app/workers/tasks.py`), avoiding the API's shared event loop. `metrics_ts` is written directly (not via `TenantRepository`) because `user_id`/`post_id` must live in the time-series `meta` field; reads (`GET /api/analytics/metrics`) likewise query `metrics_ts` directly but force-filter `meta.user_id`.
 
