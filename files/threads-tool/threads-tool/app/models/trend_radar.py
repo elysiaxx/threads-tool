@@ -6,7 +6,7 @@ RadarPost: 1 bài public đã chấm điểm score/velocity.
 RadarStats: số liệu tổng hợp để vẽ biểu đồ.
 """
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -45,9 +45,29 @@ class RadarAuthor(BaseModel):
     is_verified: Optional[bool] = None
 
 
+TargetKind = Literal["keyword", "hashtag", "link"]
+
+
+class TargetCreate(BaseModel):
+    kind: TargetKind
+    value: str
+
+
+class TrackTarget(BaseModel):
+    id: str
+    kind: TargetKind
+    value: str
+    collected_posts: int = 0
+    trending_posts: int = 0
+    last_collected_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
 class RadarPost(BaseModel):
     id: str
     account_id: Optional[str] = None
+    source_kind: Optional[str] = None  # account/keyword/hashtag/link
+    source_value: Optional[str] = None
     permalink: Optional[str] = None
     text: Optional[str] = None
     taken_at: Optional[datetime] = None
@@ -79,3 +99,54 @@ class RadarStats(BaseModel):
     by_media_type: list[RadarBucket] = []
     timeline: list[RadarBucket] = []  # label = ngày đăng (YYYY-MM-DD)
     last_collected_at: Optional[datetime] = None
+
+
+class RadarWatchItem(BaseModel):
+    """1 tài khoản trong watchlist + số liệu thu thập được của nó."""
+
+    account_id: str
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    profile_pic_url: Optional[str] = None
+    follower_count: Optional[int] = None
+    collected_posts: int = 0
+    trending_posts: int = 0
+    last_collected_at: Optional[datetime] = None
+
+
+class RadarStatus(BaseModel):
+    """Trạng thái tiến trình thu thập gần nhất (1 bản/tenant)."""
+
+    state: Literal["idle", "running"] = "idle"
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    accounts: int = 0
+    collected: int = 0
+    errors: list[str] = []
+
+
+class RadarSessionIn(BaseModel):
+    """Cookie phiên Threads (vd chuỗi 'sessionid=...; ds_user_id=...')."""
+
+    cookie: str
+
+
+class RadarBrowserImport(BaseModel):
+    """Payload từ browser helper: cookie export/header + search doc_id nếu bắt được."""
+
+    cookie: str
+    search_doc_id: Optional[str] = None
+    search_friendly_name: Optional[str] = None
+
+
+class RadarSession(BaseModel):
+    """Trạng thái cookie phiên (KHÔNG bao giờ trả cookie thô)."""
+
+    has_cookie: bool = False
+    updated_at: Optional[datetime] = None
+    last_check_ok: Optional[bool] = None
+    last_check_at: Optional[datetime] = None
+    last_check_error: Optional[str] = None
+    search_doc_id: Optional[str] = None
+    search_friendly_name: Optional[str] = None
+    doc_id_updated_at: Optional[datetime] = None

@@ -38,6 +38,11 @@ async def ensure_indexes() -> None:
     )
     await db.public_posts.create_index([("user_id", 1), ("collected_at", -1)])
     await db.trend_settings.create_index("user_id", unique=True)
+    await db.radar_status.create_index("user_id", unique=True)
+    await db.radar_session.create_index("user_id", unique=True)
+    await db.watch_targets.create_index(
+        [("user_id", 1), ("kind", 1), ("value", 1)], unique=True
+    )
 
 
 async def ensure_timeseries() -> None:

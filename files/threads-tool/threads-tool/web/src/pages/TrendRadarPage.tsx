@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bar,
@@ -12,19 +12,95 @@ import {
   YAxis,
 } from "recharts";
 import {
+  addTarget,
   collectRadar,
+  deleteSession,
+  discoverSessionDocId,
   getRadarSettings,
   getRadarStats,
+  getRadarStatus,
+  getSession,
+  getWatchlist,
   listRadarPosts,
+  listTargets,
+  removeTarget,
+  saveSession,
+  testSession,
   updateRadarSettings,
 } from "../api/radar";
-import { ApiError } from "../api/client";
-import type { RadarPost, RadarSettings, RadarStats } from "../types";
+import { ApiError, getToken } from "../api/client";
+import type {
+  RadarPost,
+  RadarSettings,
+  RadarStats,
+  RadarStatus,
+  RadarWatchItem,
+  TargetKind,
+} from "../types";
+
+type CookieExportItem = {
+  name?: unknown;
+  value?: unknown;
+};
+
+const COOKIE_PRIORITY = ["sessionid", "csrftoken", "ds_user_id"];
+
+function cookieHeaderFromExport(items: CookieExportItem[]) {
+  const values = new Map<string, string>();
+  const order: string[] = [];
+  for (const item of items) {
+    const name = typeof item.name === "string" ? item.name.trim() : "";
+    const value = typeof item.value === "string" ? item.value.trim() : "";
+    if (!name || !value) continue;
+    if (!values.has(name)) order.push(name);
+    values.set(name, value);
+  }
+
+  const names = COOKIE_PRIORITY.filter((name) => values.has(name));
+  for (const name of order) {
+    if (!names.includes(name)) names.push(name);
+  }
+  return {
+    cookie: names.map((name) => `${name}=${values.get(name)}`).join("; "),
+    hasSessionId: values.has("sessionid"),
+  };
+}
+
+function normalizeCookieFileText(text: string) {
+  const raw = text.trim();
+  if (!raw) return { cookie: "", warning: "File cookie đang rỗng." };
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return { cookie: raw, warning: "File không phải JSON cookie array; đã đưa text gốc vào ô cookie." };
+    }
+    const result = cookieHeaderFromExport(parsed as CookieExportItem[]);
+    if (!result.cookie) {
+      return { cookie: "", warning: "File cookie không có name/value hợp lệ." };
+    }
+    return {
+      cookie: result.cookie,
+      warning: result.hasSessionId ? null : "File cookie thiếu sessionid.",
+    };
+  } catch {
+    return { cookie: raw, warning: "File không phải JSON hợp lệ; đã đưa text gốc vào ô cookie." };
+  }
+}
 
 export default function TrendRadarPage() {
   const qc = useQueryClient();
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const { data: status } = useQuery({
+    queryKey: ["radar-status"],
+    queryFn: getRadarStatus,
+    refetchInterval: (q) =>
+      (q.state.data as RadarStatus | undefined)?.state === "running" ? 2500 : false,
+  });
+  const collecting = status?.state === "running";
+  const liveInterval = collecting ? 4000 : (false as const);
 
   const { data: settings } = useQuery({
     queryKey: ["radar-settings"],
@@ -33,19 +109,32 @@ export default function TrendRadarPage() {
   const { data: stats } = useQuery({
     queryKey: ["radar-stats"],
     queryFn: getRadarStats,
+    refetchInterval: liveInterval,
   });
   const { data: posts } = useQuery({
     queryKey: ["radar-posts"],
     queryFn: () => listRadarPosts(),
+    refetchInterval: liveInterval,
   });
+  const { data: watchlist } = useQuery({
+    queryKey: ["radar-watchlist"],
+    queryFn: getWatchlist,
+    refetchInterval: liveInterval,
+  });
+
+  // Khi thu thập vừa xong (running -> idle), làm mới lần cuối để lấy số liệu chốt.
+  const wasCollecting = useRef(false);
+  useEffect(() => {
+    if (wasCollecting.current && !collecting) refresh();
+    wasCollecting.current = collecting;
+  }, [collecting]);
 
   const collect = useMutation({
     mutationFn: collectRadar,
     onSuccess: () => {
       setError(null);
-      setNotice(
-        "Đã xếp hàng thu thập watchlist. Số liệu sẽ cập nhật sau ít phút — bấm Làm mới."
-      );
+      setNotice("Đã bắt đầu thu thập watchlist — số liệu sẽ tự cập nhật khi xong.");
+      qc.invalidateQueries({ queryKey: ["radar-status"] });
     },
     onError: (e) =>
       setError(e instanceof ApiError ? e.message : "Không thu thập được"),
@@ -54,6 +143,9 @@ export default function TrendRadarPage() {
   function refresh() {
     qc.invalidateQueries({ queryKey: ["radar-stats"] });
     qc.invalidateQueries({ queryKey: ["radar-posts"] });
+    qc.invalidateQueries({ queryKey: ["radar-watchlist"] });
+    qc.invalidateQueries({ queryKey: ["radar-targets"] });
+    qc.invalidateQueries({ queryKey: ["radar-status"] });
   }
 
   return (
@@ -72,9 +164,13 @@ export default function TrendRadarPage() {
           <button
             className="btn-primary"
             onClick={() => collect.mutate()}
-            disabled={collect.isPending}
+            disabled={collect.isPending || collecting}
           >
-            {collect.isPending ? "Đang gửi…" : "Thu thập ngay"}
+            {collecting
+              ? "Đang thu thập…"
+              : collect.isPending
+              ? "Đang gửi…"
+              : "Thu thập ngay"}
           </button>
         </div>
       </div>
@@ -82,7 +178,15 @@ export default function TrendRadarPage() {
       {notice && <p className="text-sm text-green-700">{notice}</p>}
       {error && <p className="text-sm text-red-600">{error}</p>}
 
+      <CollectionStatus status={status} />
+
       <StatCards stats={stats} />
+
+      <Watchlist items={watchlist} collecting={collecting} />
+
+      <SessionPanel onError={setError} onNotice={setNotice} />
+
+      <TargetsPanel collecting={collecting} onError={setError} />
 
       <SettingsPanel
         settings={settings}
@@ -103,6 +207,464 @@ export default function TrendRadarPage() {
 
       <TrendingTable posts={posts} />
     </div>
+  );
+}
+
+function CollectionStatus({ status }: { status?: RadarStatus }) {
+  if (!status) return null;
+  const running = status.state === "running";
+  return (
+    <section
+      className={`card border-l-4 ${
+        running ? "border-l-blue-500" : "border-l-gray-200"
+      }`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {running ? (
+            <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-blue-500" />
+          ) : (
+            <span className="h-2.5 w-2.5 rounded-full bg-gray-300" />
+          )}
+          <span className="font-medium">
+            {running ? "Đang thu thập watchlist…" : "Sẵn sàng"}
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-gray-600">
+          <span>
+            Tài khoản: <b>{status.accounts}</b>
+          </span>
+          <span>
+            Bài thu thập: <b>{status.collected}</b>
+          </span>
+          {status.finished_at && !running && (
+            <span className="text-gray-400">
+              Xong: {new Date(status.finished_at).toLocaleString()}
+            </span>
+          )}
+          {running && status.started_at && (
+            <span className="text-gray-400">
+              Bắt đầu: {new Date(status.started_at).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+      </div>
+      {status.errors.length > 0 && (
+        <ul className="mt-2 space-y-0.5 text-xs text-amber-700">
+          {status.errors.slice(0, 5).map((e, i) => (
+            <li key={i}>⚠ {e}</li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function SessionPanel({
+  onError,
+  onNotice,
+}: {
+  onError: (m: string) => void;
+  onNotice: (m: string) => void;
+}) {
+  const qc = useQueryClient();
+  const [cookie, setCookie] = useState("");
+  const [cookieFileWarning, setCookieFileWarning] = useState<string | null>(null);
+
+  const { data: session } = useQuery({
+    queryKey: ["radar-session"],
+    queryFn: getSession,
+  });
+
+  const save = useMutation({
+    mutationFn: () => saveSession(cookie.trim()),
+    onSuccess: () => {
+      setCookie("");
+      setCookieFileWarning(null);
+      onNotice("Đã lưu cookie phiên (mã hoá). Bấm 'Kiểm tra' để xác thực.");
+      qc.invalidateQueries({ queryKey: ["radar-session"] });
+    },
+    onError: (e) =>
+      onError(e instanceof ApiError ? e.message : "Không lưu được cookie"),
+  });
+  const test = useMutation({
+    mutationFn: testSession,
+    onSuccess: (r) => {
+      if (r.ok) onNotice(`Cookie hợp lệ ✓ (tìm thử được ${r.count ?? 0} bài).`);
+      else onError(`Cookie không dùng được: ${r.error ?? "lỗi"}`);
+      qc.invalidateQueries({ queryKey: ["radar-session"] });
+    },
+  });
+  const del = useMutation({
+    mutationFn: deleteSession,
+    onSuccess: () => {
+      onNotice("Đã xoá cookie phiên.");
+      qc.invalidateQueries({ queryKey: ["radar-session"] });
+    },
+  });
+
+  const discover = useMutation({
+    mutationFn: discoverSessionDocId,
+    onSuccess: (r) => {
+      if (r.ok) {
+        onNotice(`Đã dò doc_id ${r.doc_id} (${r.friendly_name ?? "search query"}).`);
+      } else {
+        onError(`Không dò được doc_id: ${r.error ?? "lỗi"}`);
+      }
+      qc.invalidateQueries({ queryKey: ["radar-session"] });
+    },
+    onError: (e) =>
+      onError(e instanceof ApiError ? e.message : "Không dò được doc_id"),
+  });
+
+  const has = session?.has_cookie;
+
+  function handleCookieFile(file: File | undefined) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === "string" ? reader.result : "";
+      const result = normalizeCookieFileText(text);
+      setCookie(result.cookie);
+      setCookieFileWarning(result.warning);
+    };
+    reader.onerror = () => {
+      setCookieFileWarning("Không đọc được file cookie.");
+    };
+    reader.readAsText(file);
+  }
+
+  async function copyHelperToken() {
+    const token = getToken();
+    if (!token) {
+      onError("Không tìm thấy token đăng nhập app.");
+      return;
+    }
+    await navigator.clipboard.writeText(token);
+    onNotice("Đã copy app token cho browser helper.");
+  }
+
+  return (
+    <section className="card border-l-4 border-l-amber-400">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">Phiên Threads (cookie để search)</h2>
+        {session && (
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs ${
+              has
+                ? session.last_check_ok
+                  ? "bg-green-100 text-green-700"
+                  : "bg-amber-100 text-amber-700"
+                : "bg-gray-100 text-gray-500"
+            }`}
+          >
+            {has
+              ? session.last_check_ok
+                ? "Đã kết nối ✓"
+                : "Đã lưu cookie (chưa kiểm tra)"
+              : "Chưa có cookie"}
+          </span>
+        )}
+      </div>
+      <p className="mt-1 text-xs text-gray-500">
+        Search theo từ khoá/hashtag/link cần phiên đăng nhập. Mở{" "}
+        <b>threads.com</b> (đã đăng nhập) → DevTools (F12) → Application → Cookies →
+        copy giá trị <b>sessionid</b> (hoặc cả chuỗi cookie) rồi dán vào đây. Cookie
+        được lưu <b>mã hoá</b> và không hiển thị lại. Nên dùng <b>account phụ</b>.
+      </p>
+      <p className="mt-1 text-xs text-gray-500">
+        Cách ổn định hơn: load extension trong <b>browser-helper</b>, copy helper token,
+        mở Threads qua extension rồi gửi cookie + doc_id về app.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <input
+          className="input max-w-md flex-1"
+          type="password"
+          placeholder="sessionid=...; ds_user_id=...; csrftoken=..."
+          value={cookie}
+          onChange={(e) => {
+            setCookie(e.target.value);
+            setCookieFileWarning(null);
+          }}
+        />
+        <label className="btn-secondary cursor-pointer">
+          Upload file
+          <input
+            type="file"
+            accept=".txt,.json,application/json,text/plain"
+            className="hidden"
+            onChange={(e) => {
+              handleCookieFile(e.target.files?.[0]);
+              e.currentTarget.value = "";
+            }}
+          />
+        </label>
+        <button
+          className="btn-primary"
+          onClick={() => cookie.trim() && save.mutate()}
+          disabled={save.isPending || !cookie.trim()}
+        >
+          {save.isPending ? "Đang lưu…" : "Lưu cookie"}
+        </button>
+        <button
+          className="btn-secondary"
+          onClick={() => test.mutate()}
+          disabled={test.isPending || !has}
+        >
+          {test.isPending ? "Đang kiểm tra…" : "Kiểm tra"}
+        </button>
+        <button
+          className="btn-secondary"
+          onClick={() => discover.mutate()}
+          disabled={discover.isPending || !has}
+        >
+          {discover.isPending ? "Đang dò..." : "Dò doc_id"}
+        </button>
+        <button className="btn-secondary" onClick={copyHelperToken}>
+          Copy helper token
+        </button>
+        {has && (
+          <button
+            className="btn-secondary text-red-600"
+            onClick={() => del.mutate()}
+            disabled={del.isPending}
+          >
+            Xoá
+          </button>
+        )}
+      </div>
+      {session?.last_check_error && !session.last_check_ok && (
+        <p className="mt-2 text-xs text-amber-700">⚠ {session.last_check_error}</p>
+      )}
+      {cookieFileWarning && (
+        <p className="mt-2 text-xs text-amber-700">{cookieFileWarning}</p>
+      )}
+      {session?.search_doc_id && (
+        <p className="mt-2 text-xs text-gray-500">
+          doc_id search: <b>{session.search_doc_id}</b>
+          {session.search_friendly_name ? ` (${session.search_friendly_name})` : ""}
+          {session.doc_id_updated_at
+            ? ` - ${new Date(session.doc_id_updated_at).toLocaleString()}`
+            : ""}
+        </p>
+      )}
+    </section>
+  );
+}
+
+const KIND_LABEL: Record<TargetKind, string> = {
+  keyword: "Từ khoá",
+  hashtag: "Hashtag",
+  link: "Link/URL",
+};
+const KIND_PLACEHOLDER: Record<TargetKind, string> = {
+  keyword: "vd: trí tuệ nhân tạo",
+  hashtag: "vd: threadsvn (tự thêm #)",
+  link: "vd: example.com hoặc link 1 bài Threads",
+};
+
+function TargetsPanel({
+  collecting,
+  onError,
+}: {
+  collecting: boolean;
+  onError: (m: string) => void;
+}) {
+  const qc = useQueryClient();
+  const [kind, setKind] = useState<TargetKind>("keyword");
+  const [value, setValue] = useState("");
+
+  const { data: targets } = useQuery({
+    queryKey: ["radar-targets"],
+    queryFn: listTargets,
+    refetchInterval: collecting ? 4000 : (false as const),
+  });
+
+  const add = useMutation({
+    mutationFn: () => addTarget(kind, value.trim()),
+    onSuccess: () => {
+      setValue("");
+      qc.invalidateQueries({ queryKey: ["radar-targets"] });
+    },
+    onError: (e) =>
+      onError(e instanceof ApiError ? e.message : "Không thêm được nguồn"),
+  });
+  const del = useMutation({
+    mutationFn: (id: string) => removeTarget(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["radar-targets"] }),
+  });
+
+  return (
+    <section className="card">
+      <h2 className="mb-1 text-lg font-semibold">
+        Nguồn theo dõi: từ khoá / hashtag / link
+      </h2>
+      <p className="mb-3 text-xs text-gray-500">
+        Ngoài watchlist tài khoản, bạn có thể bám trend theo từ khoá, hashtag hoặc
+        link. Mỗi lần thu thập sẽ tìm bài public khớp và chấm điểm như trên.
+      </p>
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (value.trim()) add.mutate();
+        }}
+      >
+        <select
+          className="input max-w-[140px]"
+          value={kind}
+          onChange={(e) => setKind(e.target.value as TargetKind)}
+        >
+          {(Object.keys(KIND_LABEL) as TargetKind[]).map((k) => (
+            <option key={k} value={k}>
+              {KIND_LABEL[k]}
+            </option>
+          ))}
+        </select>
+        <input
+          className="input max-w-sm flex-1"
+          placeholder={KIND_PLACEHOLDER[kind]}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <button className="btn-primary" disabled={add.isPending}>
+          {add.isPending ? "Đang thêm…" : "Thêm nguồn"}
+        </button>
+      </form>
+
+      {targets && targets.length > 0 && (
+        <div className="mt-4 overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="text-gray-500">
+              <tr className="border-b">
+                <th className="py-2 pr-3">Loại</th>
+                <th className="py-2 pr-3">Giá trị</th>
+                <th className="py-2 pr-3 text-right">Đã thu thập</th>
+                <th className="py-2 pr-3 text-right">Trending</th>
+                <th className="py-2 pr-3">Gần nhất</th>
+                <th className="py-2"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {targets.map((t) => (
+                <tr key={t.id} className="border-b last:border-0">
+                  <td className="py-2 pr-3">
+                    <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                      {KIND_LABEL[t.kind]}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-3 font-medium">{t.value}</td>
+                  <td className="py-2 pr-3 text-right">
+                    {t.collected_posts || (
+                      <span className="text-gray-300">{collecting ? "…" : "0"}</span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3 text-right font-semibold">
+                    {t.trending_posts}
+                  </td>
+                  <td className="py-2 pr-3 text-gray-500">
+                    {t.last_collected_at
+                      ? new Date(t.last_collected_at).toLocaleString()
+                      : "Chưa thu thập"}
+                  </td>
+                  <td className="py-2 text-right">
+                    <button
+                      className="text-xs text-red-600 hover:underline"
+                      onClick={() => del.mutate(t.id)}
+                      disabled={del.isPending}
+                    >
+                      Xoá
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Watchlist({
+  items,
+  collecting,
+}: {
+  items?: RadarWatchItem[];
+  collecting: boolean;
+}) {
+  return (
+    <section className="card">
+      <h2 className="mb-3 text-lg font-semibold">
+        Watchlist {items ? `(${items.length})` : ""}
+      </h2>
+      {!items || items.length === 0 ? (
+        <div className="py-4 text-sm text-gray-400">
+          Chưa theo dõi tài khoản nào. Vào <b>Tài khoản</b> → thêm username Threads
+          công khai để đưa vào watchlist, rồi bấm “Thu thập ngay”.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="text-gray-500">
+              <tr className="border-b">
+                <th className="py-2 pr-3">Tài khoản</th>
+                <th className="py-2 pr-3 text-right">Follower</th>
+                <th className="py-2 pr-3 text-right">Đã thu thập</th>
+                <th className="py-2 pr-3 text-right">Trending</th>
+                <th className="py-2 pr-3">Lần thu thập gần nhất</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((w) => (
+                <tr key={w.account_id} className="border-b last:border-0">
+                  <td className="py-2 pr-3">
+                    <div className="flex items-center gap-2">
+                      {w.profile_pic_url ? (
+                        <img
+                          src={w.profile_pic_url}
+                          alt=""
+                          className="h-7 w-7 rounded-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-400">
+                          @
+                        </span>
+                      )}
+                      <div className="leading-tight">
+                        <div className="font-medium">@{w.username ?? "?"}</div>
+                        {w.full_name && (
+                          <div className="text-xs text-gray-400">{w.full_name}</div>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="py-2 pr-3 text-right text-gray-600">
+                    {w.follower_count ?? "—"}
+                  </td>
+                  <td className="py-2 pr-3 text-right">
+                    {w.collected_posts || (
+                      <span className="text-gray-300">
+                        {collecting ? "…" : "0"}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3 text-right font-semibold">
+                    {w.trending_posts}
+                  </td>
+                  <td className="py-2 pr-3 text-gray-500">
+                    {w.last_collected_at
+                      ? new Date(w.last_collected_at).toLocaleString()
+                      : "Chưa thu thập"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -300,6 +862,7 @@ function TrendingTable({ posts }: { posts?: RadarPost[] }) {
                 <th className="py-2 pr-3">#</th>
                 <th className="py-2 pr-3">Nội dung</th>
                 <th className="py-2 pr-3">Tác giả</th>
+                <th className="py-2 pr-3">Nguồn</th>
                 <th className="py-2 pr-3 text-right">Score</th>
                 <th className="py-2 pr-3 text-right">Velocity/h</th>
                 <th className="py-2 pr-3 text-right">Like</th>
@@ -326,6 +889,22 @@ function TrendingTable({ posts }: { posts?: RadarPost[] }) {
                   </td>
                   <td className="py-2 pr-3 text-gray-600">
                     @{p.author?.username ?? "?"}
+                  </td>
+                  <td className="py-2 pr-3 text-xs text-gray-500">
+                    {p.source_kind ? (
+                      <>
+                        <span className="rounded bg-gray-100 px-1.5 py-0.5">
+                          {p.source_kind}
+                        </span>
+                        {p.source_value && (
+                          <div className="mt-1 max-w-[160px] truncate">
+                            {p.source_value}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      "-"
+                    )}
                   </td>
                   <td className="py-2 pr-3 text-right font-semibold">
                     {p.score.toFixed(2)}

@@ -257,19 +257,109 @@ def extract_shortcode(post_ref: str) -> Optional[str]:
     return None
 
 
+def _iter_posts(node, out: list[dict]) -> None:
+    """Duyệt đệ quy response GraphQL, gom mọi `post` nằm trong `thread_items`."""
+    if isinstance(node, dict):
+        items = node.get("thread_items")
+        if isinstance(items, list):
+            for it in items:
+                post = (it or {}).get("post")
+                if post:
+                    out.append(post)
+        for value in node.values():
+            _iter_posts(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _iter_posts(value, out)
+
+
+_SCRIPT_JSON_RE = re.compile(
+    r'<script[^>]*type="application/json"[^>]*>(.*?)</script>', re.DOTALL
+)
+
+
+def extract_posts_from_html(text: str) -> list[dict]:
+    """Gom post nhúng trong các block <script type="application/json"> của trang web.
+
+    Threads server-render dữ liệu vào các script JSON (relay payload). Cách này
+    không cần doc_id GraphQL — dùng cho search/tag khi chưa cấu hình doc_id.
+    """
+    out: list[dict] = []
+    for match in _SCRIPT_JSON_RE.finditer(text):
+        raw = match.group(1).strip()
+        if "thread_items" not in raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except (ValueError, json.JSONDecodeError):
+            continue
+        _iter_posts(data, out)
+    return out
+
+
+def extract_search_doc_id_from_html(
+    text: str,
+    friendly_name: str = "BarcelonaSearchResultsQuery",
+) -> Optional[dict[str, str]]:
+    """Find the web GraphQL search doc_id embedded in a logged-in search page."""
+    if not text:
+        return None
+
+    names = [friendly_name]
+    for match in re.finditer(r'"([A-Za-z0-9_]*Search[A-Za-z0-9_]*Query)"', text):
+        name = match.group(1)
+        if name not in names:
+            names.append(name)
+
+    for name in names:
+        name_pos = text.find(name)
+        if name_pos < 0:
+            continue
+        window = text[max(0, name_pos - 4000): name_pos + 4000]
+        doc_match = re.search(r'(?:doc_id|docID|__dr)[^0-9]{0,120}(\d{8,})', window)
+        if doc_match:
+            return {"doc_id": doc_match.group(1), "friendly_name": name}
+
+    for match in re.finditer(r'(?:doc_id=|["\']doc_id["\']\s*:\s*["\'])(\d{8,})', text):
+        window = text[max(0, match.start() - 3000): match.end() + 3000]
+        for name in names:
+            if name in window:
+                return {"doc_id": match.group(1), "friendly_name": name}
+
+    return None
+
+
 class ThreadsPublicClient:
-    def __init__(self, proxy: Optional[str] = None, timeout: float = 30):
+    def __init__(
+        self,
+        proxy: Optional[str] = None,
+        timeout: float = 30,
+        *,
+        cookie: Optional[str] = None,
+        search_doc_id: Optional[str] = None,
+        search_friendly_name: str = "BarcelonaSearchResultsQuery",
+    ):
         self._proxy = proxy
         self._timeout = timeout
+        self._cookie = (cookie or "").strip() or None
+        self._search_doc_id = search_doc_id
+        self._search_friendly_name = search_friendly_name
         self._lsd_token: Optional[str] = None
         self._post_cache_by_id: dict[str, dict] = {}
         self._post_cache_by_shortcode: dict[str, dict] = {}
 
+    @property
+    def authenticated(self) -> bool:
+        return self._cookie is not None
+
     def _client(self) -> httpx.AsyncClient:
+        # Cookie (nếu có) gắn cho MỌI request -> đọc ở trạng thái đã đăng nhập.
+        headers = {"Cookie": self._cookie} if self._cookie else None
         return httpx.AsyncClient(
             follow_redirects=True,
             timeout=self._timeout,
             proxy=self._proxy,
+            headers=headers,
         )
 
     async def _get_text(self, url: str, headers: Optional[dict] = None) -> str:
@@ -445,3 +535,89 @@ class ThreadsPublicClient:
         post = extract_public_post_from_html(html_text, shortcode=shortcode)
         self._cache_posts([post])
         return post
+
+    async def search_posts(
+        self,
+        query: str,
+        *,
+        search_mode: str = "DEFAULT",
+        limit: int = 25,
+    ) -> list[dict]:
+        """
+        Tìm post công khai theo keyword/hashtag qua web GraphQL search.
+
+        Threads đổi doc_id theo thời gian nên doc_id được truyền từ cấu hình
+        (THREADS_SEARCH_DOC_ID). Nếu chưa cấu hình -> báo lỗi rõ ràng để caller
+        ghi nhận, KHÔNG làm vỡ luồng thu thập.
+        """
+        query = (query or "").strip()
+        if not query:
+            raise ThreadsPublicError("query rỗng")
+        if not self._cookie and not self._search_doc_id:
+            raise ThreadsPublicError(
+                "Search public cần session cookie (mục Phiên Threads) hoặc THREADS_SEARCH_DOC_ID"
+            )
+
+        raw: list[dict] = []
+
+        # 1) Đã có cookie -> mở trang search ĐÃ ĐĂNG NHẬP, Threads render kèm dữ liệu
+        #    (relay payload trong <script application/json>) -> không cần doc_id.
+        if self._cookie:
+            raw = await self._search_via_html(query)
+
+        # 2) Fallback GraphQL nếu cấu hình doc_id (và HTML chưa ra kết quả).
+        if not raw and self._search_doc_id:
+            data = await self._graphql(
+                self._search_friendly_name,
+                {"query": query, "search_type": search_mode},
+                self._search_doc_id,
+            )
+            _iter_posts(data.get("data"), raw)
+
+        seen: set[str] = set()
+        posts: list[dict] = []
+        for p in raw:
+            norm = _normalize_post(p)
+            pid = norm.get("id")
+            if pid and pid in seen:
+                continue
+            if pid:
+                seen.add(pid)
+            posts.append(norm)
+            if len(posts) >= limit:
+                break
+
+        if not posts:
+            raise ThreadsPublicError(
+                f"Không có kết quả cho '{query}' (cookie có thể đã hết hạn hoặc bị chặn)"
+            )
+        self._cache_posts(posts)
+        return posts
+
+    async def discover_search_doc_id(self, query: str = "threads") -> Optional[dict[str, str]]:
+        """Detect the current search GraphQL doc_id from a logged-in search page."""
+        if not self._cookie:
+            raise ThreadsPublicError("Cần cookie phiên Threads để dò search doc_id")
+
+        query = (query or "threads").strip()
+        quoted = urllib.parse.quote(query, safe="")
+        for serp in ("default", "top", "recent"):
+            url = f"{THREADS_WEB_URL}/search?q={quoted}&serp_type={serp}"
+            html_text = await self._get_text(url, headers=await self._public_headers())
+            found = extract_search_doc_id_from_html(html_text, self._search_friendly_name)
+            if found:
+                self._search_doc_id = found["doc_id"]
+                self._search_friendly_name = found["friendly_name"]
+                return found
+        return None
+
+    async def _search_via_html(self, query: str) -> list[dict]:
+        """Lấy post nhúng trong trang search (cần cookie để Threads render kết quả)."""
+        quoted = urllib.parse.quote(query, safe="")
+        for serp in ("default", "top", "recent"):
+            url = f"{THREADS_WEB_URL}/search?q={quoted}&serp_type={serp}"
+            html_text = await self._get_text(url, headers=await self._public_headers())
+            posts = extract_posts_from_html(html_text)
+            if posts:
+                return posts
+        return []

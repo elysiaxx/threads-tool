@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     threads_graph_base: str = "https://graph.threads.net"
     threads_scopes: str = "threads_basic,threads_content_publish,threads_manage_insights,threads_keyword_search"
 
+    # Trend Radar — public web search (keyword/hashtag/link). Threads đổi doc_id
+    # theo thời gian; lấy doc_id thật trong DevTools > Network > graphql của trang
+    # search rồi đặt vào env. Để rỗng -> tính năng search báo lỗi rõ ràng (không vỡ).
+    threads_search_doc_id: str = ""
+    threads_search_friendly_name: str = "BarcelonaSearchResultsQuery"
+
 
 @lru_cache
 def get_settings() -> Settings:

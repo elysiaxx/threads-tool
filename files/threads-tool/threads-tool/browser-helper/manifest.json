@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Threads Tool Browser Helper",
+  "version": "0.1.0",
+  "description": "Capture Threads cookies and search doc_id for local Threads Tool.",
+  "permissions": ["cookies", "storage", "tabs", "webRequest"],
+  "host_permissions": [
+    "https://www.threads.com/*",
+    "https://threads.com/*",
+    "http://localhost:8000/*",
+    "http://localhost:8080/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

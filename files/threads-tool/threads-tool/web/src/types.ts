@@ -178,6 +178,8 @@ export interface RadarAuthor {
 export interface RadarPost {
   id: string;
   account_id?: string | null;
+  source_kind?: string | null;
+  source_value?: string | null;
   permalink?: string | null;
   text?: string | null;
   taken_at?: string | null;
@@ -209,6 +211,62 @@ export interface RadarStats {
   by_media_type: RadarBucket[];
   timeline: RadarBucket[];
   last_collected_at?: string | null;
+}
+
+export interface RadarWatchItem {
+  account_id: string;
+  username?: string | null;
+  full_name?: string | null;
+  profile_pic_url?: string | null;
+  follower_count?: number | null;
+  collected_posts: number;
+  trending_posts: number;
+  last_collected_at?: string | null;
+}
+
+export interface RadarStatus {
+  state: "idle" | "running";
+  started_at?: string | null;
+  finished_at?: string | null;
+  accounts: number;
+  collected: number;
+  errors: string[];
+}
+
+export interface RadarSession {
+  has_cookie: boolean;
+  updated_at?: string | null;
+  last_check_ok?: boolean | null;
+  last_check_at?: string | null;
+  last_check_error?: string | null;
+  search_doc_id?: string | null;
+  search_friendly_name?: string | null;
+  doc_id_updated_at?: string | null;
+}
+
+export interface RadarSessionTest {
+  ok: boolean;
+  count?: number;
+  error?: string | null;
+}
+
+export interface RadarDocIdDiscovery {
+  ok: boolean;
+  doc_id?: string | null;
+  friendly_name?: string | null;
+  error?: string | null;
+}
+
+export type TargetKind = "keyword" | "hashtag" | "link";
+
+export interface TrackTarget {
+  id: string;
+  kind: TargetKind;
+  value: string;
+  collected_posts: number;
+  trending_posts: number;
+  last_collected_at?: string | null;
+  created_at?: string | null;
 }
 
 export interface MetricPoint {
