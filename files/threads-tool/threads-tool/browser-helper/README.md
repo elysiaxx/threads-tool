@@ -1,6 +1,6 @@
 # Threads Tool Browser Helper
 
-Chrome/Edge extension nội bộ để lấy Threads cookies và search `doc_id` từ browser đã đăng nhập.
+Chrome/Edge extension nội bộ để lấy Threads cookies, search `doc_id`, và mẫu GraphQL `variables` từ browser đã đăng nhập.
 
 ## Cài đặt
 
@@ -17,4 +17,4 @@ Chrome/Edge extension nội bộ để lấy Threads cookies và search `doc_id`
 4. Bấm `Open Threads search`, đăng nhập Threads nếu cần.
 5. Đợi trang search load vài giây, rồi bấm `Send cookies + doc_id to app`.
 
-Extension không hiển thị giá trị cookie. Cookie được gửi về API local và lưu mã hoá như luồng cookie hiện tại.
+Extension không hiển thị giá trị cookie. Cookie được gửi về API local và lưu mã hoá như luồng cookie hiện tại. Mẫu `variables` giúp backend tái dùng đúng shape search request của Threads khi dò keyword/hashtag.

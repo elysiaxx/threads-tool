@@ -69,7 +69,7 @@ Celery handles all heavy/long tasks (media download, publish, periodic metric po
 
 ## Critical pattern: multi-tenancy via TenantRepository
 
-Every user-owned collection (`accounts`, `sources`, `jobs`, `posts`, `searches`, `trends`, `public_posts`, `trend_settings`) **must** be accessed only through `TenantRepository` (`app/db/repository.py`). It hard-injects `user_id` into every read filter and every written document. Bypassing it and touching a raw Motor collection is a data-leak bug.
+Every user-owned collection (`accounts`, `sources`, `jobs`, `posts`, `searches`, `trends`, `public_posts`, `trend_settings`, `radar_status`, `watch_targets`, `radar_session`) **must** be accessed only through `TenantRepository` (`app/db/repository.py`). It hard-injects `user_id` into every read filter and every written document. Bypassing it and touching a raw Motor collection is a data-leak bug.
 
 In routes, get repositories via the `RepoFactory` dependency:
 ```python

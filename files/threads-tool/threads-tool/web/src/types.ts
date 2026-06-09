@@ -241,6 +241,7 @@ export interface RadarSession {
   last_check_error?: string | null;
   search_doc_id?: string | null;
   search_friendly_name?: string | null;
+  has_search_variables_template: boolean;
   doc_id_updated_at?: string | null;
 }
 

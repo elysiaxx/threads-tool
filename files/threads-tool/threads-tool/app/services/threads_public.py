@@ -338,12 +338,14 @@ class ThreadsPublicClient:
         cookie: Optional[str] = None,
         search_doc_id: Optional[str] = None,
         search_friendly_name: str = "BarcelonaSearchResultsQuery",
+        search_variables_template: Optional[str] = None,
     ):
         self._proxy = proxy
         self._timeout = timeout
         self._cookie = (cookie or "").strip() or None
         self._search_doc_id = search_doc_id
         self._search_friendly_name = search_friendly_name
+        self._search_variables_template = search_variables_template
         self._lsd_token: Optional[str] = None
         self._post_cache_by_id: dict[str, dict] = {}
         self._post_cache_by_shortcode: dict[str, dict] = {}
@@ -423,6 +425,32 @@ class ThreadsPublicClient:
                 self._post_cache_by_id[str(post["id"])] = post
             if post.get("code"):
                 self._post_cache_by_shortcode[post["code"]] = post
+
+    def _search_variables(self, query: str, search_mode: str) -> dict:
+        if not self._search_variables_template:
+            return {"query": query, "search_type": search_mode}
+
+        try:
+            variables = json.loads(self._search_variables_template)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {"query": query, "search_type": search_mode}
+
+        def replace(node):
+            if isinstance(node, dict):
+                out = {}
+                for key, value in node.items():
+                    if key in {"query", "q", "keyword", "searchQuery"} and isinstance(value, str):
+                        out[key] = query
+                    elif key in {"search_type", "searchType"} and isinstance(value, str):
+                        out[key] = search_mode
+                    else:
+                        out[key] = replace(value)
+                return out
+            if isinstance(node, list):
+                return [replace(value) for value in node]
+            return node
+
+        return replace(variables)
 
     async def get_profile_by_username(self, username: str) -> dict:
         username = username.strip().lstrip("@")
@@ -569,7 +597,7 @@ class ThreadsPublicClient:
         if not raw and self._search_doc_id:
             data = await self._graphql(
                 self._search_friendly_name,
-                {"query": query, "search_type": search_mode},
+                self._search_variables(query, search_mode),
                 self._search_doc_id,
             )
             _iter_posts(data.get("data"), raw)

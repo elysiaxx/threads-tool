@@ -137,6 +137,7 @@ class RadarBrowserImport(BaseModel):
     cookie: str
     search_doc_id: Optional[str] = None
     search_friendly_name: Optional[str] = None
+    search_variables_template: Optional[str] = None
 
 
 class RadarSession(BaseModel):
@@ -149,4 +150,5 @@ class RadarSession(BaseModel):
     last_check_error: Optional[str] = None
     search_doc_id: Optional[str] = None
     search_friendly_name: Optional[str] = None
+    has_search_variables_template: bool = False
     doc_id_updated_at: Optional[datetime] = None

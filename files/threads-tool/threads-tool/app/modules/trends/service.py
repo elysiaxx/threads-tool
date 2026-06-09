@@ -53,6 +53,7 @@ def _public_client(
     *,
     search_doc_id: Optional[str] = None,
     search_friendly_name: Optional[str] = None,
+    search_variables_template: Optional[str] = None,
 ) -> ThreadsPublicClient:
     """ThreadsPublicClient có cookie (đăng nhập) + cấu hình search doc_id từ env."""
     return ThreadsPublicClient(
@@ -60,6 +61,7 @@ def _public_client(
         cookie=cookie,
         search_doc_id=search_doc_id or settings.threads_search_doc_id or None,
         search_friendly_name=search_friendly_name or settings.threads_search_friendly_name,
+        search_variables_template=search_variables_template,
     )
 
 
@@ -86,6 +88,7 @@ async def _session_search_config(db: AsyncIOMotorDatabase, user_id: str) -> dict
     return {
         "search_doc_id": doc.get("search_doc_id") or None,
         "search_friendly_name": doc.get("search_friendly_name") or None,
+        "search_variables_template": doc.get("search_variables_template") or None,
     }
 
 
@@ -99,6 +102,7 @@ async def get_session(db: AsyncIOMotorDatabase, user_id: str) -> RadarSession:
         last_check_error=(doc.get("last_check") or {}).get("error"),
         search_doc_id=doc.get("search_doc_id"),
         search_friendly_name=doc.get("search_friendly_name"),
+        has_search_variables_template=bool(doc.get("search_variables_template")),
         doc_id_updated_at=doc.get("doc_id_updated_at"),
     )
 
@@ -178,6 +182,7 @@ async def import_browser_session(
     cookie: str,
     search_doc_id: Optional[str] = None,
     search_friendly_name: Optional[str] = None,
+    search_variables_template: Optional[str] = None,
 ) -> RadarSession:
     cookie = normalize_session_cookie(cookie)
     now = datetime.now(timezone.utc)
@@ -190,6 +195,8 @@ async def import_browser_session(
             else settings.threads_search_friendly_name
         )
         fields["doc_id_updated_at"] = now
+    if search_variables_template:
+        fields["search_variables_template"] = str(search_variables_template).strip()
     repo = TenantRepository(db["radar_session"], user_id)
     await repo.update_one({}, {"$set": fields}, upsert=True)
     return await get_session(db, user_id)

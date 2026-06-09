@@ -443,6 +443,7 @@ function SessionPanel({
         <p className="mt-2 text-xs text-gray-500">
           doc_id search: <b>{session.search_doc_id}</b>
           {session.search_friendly_name ? ` (${session.search_friendly_name})` : ""}
+          {session.has_search_variables_template ? " - có variables template" : ""}
           {session.doc_id_updated_at
             ? ` - ${new Date(session.doc_id_updated_at).toLocaleString()}`
             : ""}

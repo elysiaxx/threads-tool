@@ -7,6 +7,7 @@ from app.modules.trends.service import (
     normalize_session_cookie,
 )
 from app.services.threads_public import (
+    ThreadsPublicClient,
     _iter_posts,
     extract_search_doc_id_from_html,
     extract_posts_from_html,
@@ -64,6 +65,24 @@ def test_extract_search_doc_id_from_html_near_friendly_name():
 def test_extract_search_doc_id_from_html_returns_none_without_search_query():
     html = '<script>{"uri":"/api/graphql?doc_id=12345678901234567"}</script>'
     assert extract_search_doc_id_from_html(html) is None
+
+
+def test_search_variables_template_replaces_query_recursively():
+    client = ThreadsPublicClient(
+        search_variables_template='{"input":{"query":"threads","search_type":"DEFAULT"},"keep":1}'
+    )
+    assert client._search_variables("ai marketing", "RECENT") == {
+        "input": {"query": "ai marketing", "search_type": "RECENT"},
+        "keep": 1,
+    }
+
+
+def test_search_variables_template_falls_back_when_bad_json():
+    client = ThreadsPublicClient(search_variables_template="{bad")
+    assert client._search_variables("threads", "DEFAULT") == {
+        "query": "threads",
+        "search_type": "DEFAULT",
+    }
 
 
 def test_normalize_session_cookie_accepts_browser_export_json():

@@ -43,6 +43,7 @@ async function loadState() {
     "token",
     "threadsSearchDocId",
     "threadsSearchFriendlyName",
+    "threadsSearchVariablesTemplate",
     "threadsDocIdCapturedAt",
   ]);
   apiBaseInput.value = state.apiBase || "http://localhost:8000/api";
@@ -80,6 +81,7 @@ document.getElementById("send").addEventListener("click", async () => {
   const state = await chrome.storage.local.get([
     "threadsSearchDocId",
     "threadsSearchFriendlyName",
+    "threadsSearchVariablesTemplate",
   ]);
 
   const response = await fetch(`${apiBase}/radar/session/browser-import`, {
@@ -92,6 +94,7 @@ document.getElementById("send").addEventListener("click", async () => {
       cookie: JSON.stringify(convertCookies(cookies)),
       search_doc_id: state.threadsSearchDocId || null,
       search_friendly_name: state.threadsSearchFriendlyName || null,
+      search_variables_template: state.threadsSearchVariablesTemplate || null,
     }),
   });
 
@@ -109,7 +112,7 @@ document.getElementById("send").addEventListener("click", async () => {
   }
 
   setStatus(
-    `Imported ${cookies.length} cookies.${state.threadsSearchDocId ? `\nSaved doc_id: ${state.threadsSearchDocId}` : "\nNo search doc_id captured yet."}`
+    `Imported ${cookies.length} cookies.${state.threadsSearchDocId ? `\nSaved doc_id: ${state.threadsSearchDocId}${state.threadsSearchVariablesTemplate ? "\nSaved search variables template." : ""}` : "\nNo search doc_id captured yet."}`
   );
 });
 

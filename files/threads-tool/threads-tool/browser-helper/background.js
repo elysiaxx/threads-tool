@@ -26,6 +26,7 @@ chrome.webRequest.onBeforeRequest.addListener(
     chrome.storage.local.set({
       threadsSearchDocId: String(docId),
       threadsSearchFriendlyName: String(friendlyName),
+      threadsSearchVariablesTemplate: String(variables),
       threadsDocIdCapturedAt: new Date().toISOString(),
     });
   },

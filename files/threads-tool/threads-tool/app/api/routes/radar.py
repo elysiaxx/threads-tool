@@ -122,6 +122,7 @@ async def browser_import_session(
             cookie=payload.cookie,
             search_doc_id=payload.search_doc_id,
             search_friendly_name=payload.search_friendly_name,
+            search_variables_template=payload.search_variables_template,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
